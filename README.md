@@ -2,29 +2,48 @@
 
 A small, keyboard-first todo app for the terminal. Tasks live in ordinary `TODO.md` files; projects are a registry of those files, not another database. Built with Python and [Textual](https://textual.textualize.io/).
 
+No account, no database, no daemon. Optional two-way [TickTick sync](#ticktick-sync-optional) if you want your tasks on your phone too.
+
 ![Projects view showing per-project task counts](assets/screenshot.png)
+
+## Requirements
+
+- Python 3.10 or newer
+- A terminal. The TUI needs an interactive terminal; the script-friendly commands (`stats`, `projects`, `sync`) do not.
 
 ## Install
 
-Python 3.10+ is required. With [uv](https://docs.astral.sh/uv/):
+The package is not on PyPI — the `todox` name there belongs to a different project — so install it from this repository.
+
+With [uv](https://docs.astral.sh/uv/):
 
 ```sh
-uv tool install .
+uv tool install git+https://github.com/Hassibayub/todox
 ```
 
-Or in a virtual environment:
+With [pipx](https://pipx.pypa.io/):
+
+```sh
+pipx install git+https://github.com/Hassibayub/todox
+```
+
+From a checkout (editable, handy while developing):
 
 ```sh
 python3 -m venv .venv
-.venv/bin/pip install -e .
+.venv/bin/pip install -e '.[dev]'
 .venv/bin/todo --help
 ```
 
-If an older Bun-linked `todo` is still on your `PATH`, remove that link or invoke the command from your virtual environment. To try sample projects without installing the command:
+Upgrade later with `uv tool install --force git+https://github.com/Hassibayub/todox` or `pipx install --force git+https://github.com/Hassibayub/todox`.
+
+The command is `todo`. To try the bundled sample projects without installing anything:
 
 ```sh
-TODOX_CONFIG=examples/config.json python3 -m todox.cli --global
+TODOX_CONFIG=examples/config.json python3 -m todox --global
 ```
+
+`python -m todox` is equivalent to the `todo` command.
 
 ## Use
 
@@ -97,7 +116,11 @@ Because TickTick's create endpoint cannot set a completion timestamp, a task alr
 ## Develop
 
 ```sh
-python3 -m pytest tests_py -q
+python3 -m venv .venv
+.venv/bin/pip install -e '.[dev]'
+.venv/bin/python -m pytest tests_py -q     # 32 tests
+.venv/bin/ruff check todox tests_py
+uv build                                   # sdist + wheel
 ```
 
-The tests use temporary task files and registries. MIT licensed; see [LICENSE](LICENSE).
+The tests use temporary task files, registries, and a fake TickTick transport, so they never touch your real data or the network. See [CHANGELOG.md](CHANGELOG.md) for release history. MIT licensed; see [LICENSE](LICENSE).

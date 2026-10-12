@@ -3,13 +3,39 @@ requires = ["setuptools>=69"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "todox"
+name = "todox-tui"
 version = "0.4.4"
-description = "A Markdown-native terminal todo app"
+description = "A keyboard-first, Markdown-native todo app for the terminal"
 readme = "README.md"
 requires-python = ">=3.10"
 license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "Muhammad Haseeb" }]
+keywords = ["todo", "tui", "terminal", "markdown", "textual", "ticktick", "cli"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Office/Business :: Scheduling",
+    "Topic :: Utilities",
+]
 dependencies = ["textual>=6.0,<9"]
+
+[project.optional-dependencies]
+test = ["pytest>=8", "pytest-asyncio>=0.23"]
+dev = ["pytest>=8", "pytest-asyncio>=0.23", "ruff>=0.6"]
+
+[project.urls]
+Homepage = "https://github.com/Hassibayub/todox"
+Repository = "https://github.com/Hassibayub/todox"
+Issues = "https://github.com/Hassibayub/todox/issues"
+Changelog = "https://github.com/Hassibayub/todox/blob/main/CHANGELOG.md"
 
 [project.scripts]
 todo = "todox.cli:main"
@@ -22,3 +48,7 @@ todox = ["*.tcss"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests_py"]
+asyncio_mode = "strict"
+
+[tool.ruff]
+line-length = 140
