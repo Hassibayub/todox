@@ -1,75 +1,98 @@
 # todox
 
-A keyboard-driven, Markdown-native todo app for the terminal. Tasks stay in `TODO.md`; there is no database or cloud account. Plain ANSI output and raw keyboard input, built with [Bun](https://bun.sh/). **No UI framework or runtime dependencies.**
+A small, keyboard-first todo app for the terminal. Tasks live in ordinary `TODO.md` files; projects are a registry of those files, not another database. Built with Python and [Textual](https://textual.textualize.io/).
 
-The command is **`todo`**.
-
-![todo showing an example project's tasks and selection inspector](assets/screenshot.png)
-
-*Screenshot generated from the included sample project's actual ANSI UI frame. Your terminal colors may differ.*
+![Projects view showing per-project task counts](assets/screenshot.png)
 
 ## Install
 
-Requires Bun and a terminal. Neovim is optional for the `o` shortcut.
+Python 3.10+ is required. With [uv](https://docs.astral.sh/uv/):
 
 ```sh
-git clone https://github.com/Hassibayub/todox.git
-cd todox
-npm ci
-bun link
+uv tool install .
 ```
 
-`bun link` installs `todo` under `~/.bun/bin`. If your shell cannot find it, add that directory to your `PATH`. Keep the cloned directory: the command links to its source files. After moving the directory, run `bun link` again from its new location.
+Or in a virtual environment:
 
-To try it without installing the command, run `bun run demo` from the clone. The demo uses only the included sample projects and an isolated registry.
+```sh
+python3 -m venv .venv
+.venv/bin/pip install -e .
+.venv/bin/todo --help
+```
+
+If an older Bun-linked `todo` is still on your `PATH`, remove that link or invoke the command from your virtual environment. To try sample projects without installing the command:
+
+```sh
+TODOX_CONFIG=examples/config.json python3 -m todox.cli --global
+```
 
 ## Use
 
 ```sh
-cd your-project
-todo init                         # create TODO.md here, without overwriting an existing file
-todo                              # open the nearest TODO.md
-
-todo add-project ~/code/my-app     # register an existing TODO.md
-todo scan ~/code                   # register immediate child projects
-todo --global                      # overview from any directory
-todo projects                      # list registered files
-todo stats --json                  # counts for scripts
+cd my-project
+todo init                         # Create and register TODO.md
+todo                              # Open the nearest local TODO.md
+todo add-project ~/code/my-app     # Register an existing TODO.md
+todo scan ~/code                   # Register immediate child projects
+todo --global                      # Open global Projects explicitly
+todo projects                      # List registered TODO.md files
+todo stats --json                  # Counts for scripts
 ```
 
-With no local `TODO.md`, `todo` opens the global overview. A local file is registered on first visit. The project list is stored in `~/.config/todox/projects.json` (or `$XDG_CONFIG_HOME/todox/projects.json`); override it with `TODOX_CONFIG`. Each project's `TODO.md` is always the source of task data.
+A normal `todo` invocation opens the local file if one exists; from that screen you cannot navigate to global views. Without a local file, the app opens **Projects**. `todo --global` deliberately opens Projects even when a local file exists. The registry is `~/.config/todox/projects.json` or `$XDG_CONFIG_HOME/todox/projects.json`; override it with `TODOX_CONFIG`.
 
-Tasks use `[ ]` for not started, `[/]` for in progress and `[x]` for completed. Existing notes, comments, formatting, line endings and unrelated Markdown are preserved when editing tasks.
+## Screens and keys
 
-### Keys
+**Projects** shows each project's completed, in-progress, and todo counts. `Enter` opens it; `c` copies its directory path; `t` opens the global list of todo and in-progress tasks. `p` returns to Projects from a globally opened project or the task list.
 
-| Keys | Action |
+**Project tasks** show tasks before the first `##` heading without a visible Main heading. An older `## General` or `## Main` as the first section is also hidden. Each other `##` heading groups its tasks. `n` on a section adds there; `n` elsewhere adds to Main.
+
+| Key | Action |
 |---|---|
-| `j/k`, arrows, Home/End, Ctrl+d/u | Move or page |
-| Tab | Switch navigation/list focus |
-| `g`, `w`, `t` | Overview, in-progress queue, all tasks |
-| `p` | Choose project or scope |
-| Enter | Open a project or fold a group |
-| Space, `1/2/3` | Cycle or set task status |
-| `a/e/d` | Add/edit/delete task; `y` confirms deletion |
-| `S/D` | Create section / remove empty section; `y` confirms |
-| `/`, `f` | Search / filter by status |
-| `za`, `zM`, `zR` | Fold current group / collapse all / expand all |
-| `o` | Open selected file and line in Neovim |
-| `r`, Escape, `?`, `q` | Refresh, cancel/reset, help, quit |
+| `j/k`, arrows | Move through a scrolling list |
+| `Enter` | Open project, or edit task; on a section, add there |
+| `n`, `e` | Add or edit task |
+| `Space`, `1/2/3` | Cycle or set todo / in progress / completed |
+| `u` | Hide or show completed tasks |
+| `d` | Hide or show completion dates in the UI |
+| `s` | Add a `##` section |
+| `x`, `Backspace` | Delete a task or remove an empty section (confirmation required) |
+| `/`, `Esc` | Search; clear search or return from a global project |
+| `o` | Open selected task in Neovim |
+| `y` | Sync with TickTick |
+| `r`, `?`, `q` | Reload, help, quit |
 
-Section removal is **empty-only**: tasks, notes, comments, code blocks and nested headings block it. The document title and implicit General group are protected. Writes use cooperative locks, atomic replacement and stale-file checks to avoid overwriting external changes.
+Completion adds a visible suffix, for example `- [x] Ship (completed: 2026-10-12)`. Moving the task back to todo or in progress removes the suffix. `d` only changes whether the app displays that date; it never removes it from the file. Existing files without dates still work.
 
-The UI leaves your terminal background untouched and uses its default text and ANSI accent colors. Selection uses `>` and bold text, never an inverted background. Compact and full-screen terminals use the same single-pane layout. Input appears inline, with `|` marking the insertion point. Completed tasks fold in the unfiltered view; search and filters reveal matches. There is no automatic file watcher, undo, cloud sync or packaged standalone binary.
+The layout scrolls and reflows with the terminal size. Narrow project rows put counts beneath the name; short screens hide secondary hints, not tasks. Task files retain their line endings and unrelated Markdown. Updates use a cooperative lock, a stale-file check, and atomic replacement.
 
-## Develop and test
+## TickTick sync (optional)
+
+`todox` can mirror tasks to a TickTick account through the official [Open API](https://developer.ticktick.com/docs/index.html#/openapi). Setup needs one personal token; nothing is uploaded until you sync.
 
 ```sh
-bun run typecheck
-bun test
-python3 scripts/pty_smoke.py
+# TickTick web app: avatar > Settings > Account > API Token
+todo ticktick login PASTE_TOKEN
+# or pipe it: printf '%s' "$TOKEN" | todo ticktick login
+todo sync --dry-run        # preview
+todo sync                  # apply
+todo ticktick status       # token and list state
 ```
 
-Tests and the PTY smoke check use temporary files, not your registered projects. `scripts/capture.ts` generates read-only text frames under the ignored `.pi/review/` directory.
+The token is stored in `~/.config/todox/ticktick.json` with owner-only permissions, or supplied via `TODOX_TICKTICK_TOKEN`. In the TUI, `y` runs a sync and shows the result in the footer.
 
-MIT licensed. See [LICENSE](LICENSE).
+**Mapping.** Sync uses one dedicated TickTick list named `TODO.md` (created on first sync). Each registered project name becomes a task tag, so `web-app/TODO.md` becomes the `web-app` tag. `[ ]` and `[/]` stay open in TickTick, with `[/]` also carrying an `inprogress` tag because TickTick has no in-progress state; `[x]` becomes completed and `(completed: …)` supplies the date. Sections stay local.
+
+**Safety.** Only tasks this tool linked are ever updated. Either side changing alone propagates; both sides changing pauses as a conflict. Nothing is deleted on the other side unless you pass `--allow-deletes` or confirm in the app. Existing TickTick tasks are never imported unless they sit in the `TODO.md` list carrying a matching project tag, and unrecognised tags are reported instead of guessed.
+
+**Conflicts.** `todo sync --json` lists them; resolve one with `todo sync --keep-local <uid>` or `todo sync --keep-remote <uid>`. In the TUI the conflict screen uses `1` for your file and `2` for TickTick. Each synced task carries a hidden `<!-- todox:id=… -->` marker so text edits and line moves stay matched.
+
+Because TickTick's create endpoint cannot set a completion timestamp, a task already completed in `TODO.md` is completed at import time; the date in your file stays authoritative for display afterwards.
+
+## Develop
+
+```sh
+python3 -m pytest tests_py -q
+```
+
+The tests use temporary task files and registries. MIT licensed; see [LICENSE](LICENSE).

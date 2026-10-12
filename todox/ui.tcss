@@ -1,0 +1,90 @@
+Screen {
+    background: $background;
+    color: $text;
+    align: center top;
+}
+
+#shell {
+    width: 100%;
+    max-width: 100;
+    height: 100%;
+    padding: 0 1;
+}
+
+#title {
+    height: 3;
+    padding: 1 1 0 1;
+    text-style: bold;
+}
+
+#items {
+    height: 1fr;
+    width: 100%;
+    background: transparent;
+    border: none;
+    scrollbar-size: 1 1;
+}
+
+ListItem {
+    height: auto;
+    min-height: 1;
+    padding: 0 1;
+    background: transparent;
+    color: $text;
+}
+
+ListItem > Static {
+    width: 100%;
+    height: auto;
+    background: transparent;
+}
+
+ListItem.-highlight {
+    background: $primary-background;
+    color: $text;
+}
+
+ListItem.section-row {
+    margin-top: 1;
+    text-style: bold;
+}
+
+ListItem.project-row {
+    margin-bottom: 1;
+}
+
+ListItem.conflict-row {
+    margin-bottom: 1;
+}
+
+ListItem.task-row {
+    margin-bottom: 0;
+}
+
+#empty {
+    height: auto;
+    padding: 0 2;
+    color: $text-muted;
+}
+
+#prompt {
+    height: 3;
+    border: none;
+    border-top: solid $surface-lighten-2;
+    background: transparent;
+    padding: 0 1;
+}
+
+#prompt:focus {
+    border: none;
+    border-top: solid $primary;
+}
+
+#footer {
+    height: 2;
+    width: 100%;
+    border-top: solid $surface-lighten-2;
+    padding: 0 1;
+    color: $text-muted;
+    text-overflow: ellipsis;
+}

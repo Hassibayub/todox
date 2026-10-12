@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "todox"
+version = "0.4.0"
+description = "A Markdown-native terminal todo app"
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MIT"
+dependencies = ["textual>=6.0,<9"]
+
+[project.scripts]
+todo = "todox.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["todox*"]
+
+[tool.setuptools.package-data]
+todox = ["*.tcss"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests_py"]
