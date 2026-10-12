@@ -2,11 +2,20 @@
 from __future__ import annotations
 
 from pathlib import Path
+from importlib.metadata import PackageNotFoundError, version as package_version
 import json
 import sys
 
 from .projects import find_local, load_config, load_projects, register, resolve_todo, unregister
 from .store import counts
+
+
+def current_version() -> str:
+    try:
+        return package_version("todox-tui")
+    except PackageNotFoundError:  # running from a source checkout
+        return "0.4.4"
+
 
 HELP = """todo — Markdown tasks in your terminal
 
@@ -33,7 +42,7 @@ def run(args: list[str] | None = None, cwd: Path | None = None) -> int:
         print(HELP)
         return 0
     if command == "--version":
-        print("0.4.4")
+        print(current_version())
         return 0
     if command == "init" and len(args) == 1:
         path = cwd / "TODO.md"
