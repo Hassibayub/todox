@@ -23,7 +23,7 @@ test("Core retained tree renders local tasks, responds to navigation and resize"
     new CoreApp(setup.renderer, undefined, { model });
     await setup.renderOnce();
     let frame = setup.captureCharFrame();
-    expect(frame).toContain("todox2"); expect(frame).toContain("Frontend"); expect(frame).toContain("SELECTION");
+    expect(frame).toContain("todo  /"); expect(frame).toContain("Frontend"); expect(frame).toContain("SELECTION");
     setup.mockInput.pressKey(KeyCodes.END); await setup.renderOnce();
     expect(model.selectedNode?.kind).toBe("section");
     setup.resize(50, 12); await setup.renderOnce(); frame = setup.captureCharFrame();

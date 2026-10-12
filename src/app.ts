@@ -92,7 +92,7 @@ export class CoreApp {
     this.cols = this.renderer.width;
     this.rows = this.renderer.height;
     if (this.cols < 42 || this.rows < 10) {
-      this.header.content = "todox2 — resize terminal (42×10) · q quit";
+      this.header.content = "todo — resize terminal (42×10) · q quit";
       this.nav.content = ""; this.subhead.content = ""; this.footer.content = "";
       this.list.visible = false; this.detail.visible = false; this.hideDialog(); return;
     }
@@ -102,7 +102,7 @@ export class CoreApp {
     this.listCols = this.cols - (this.wide ? 32 : 0);
     this.listRows = Math.max(1, this.rows - 4);
     const c = model.totals;
-    this.header.content = pack(` todox2  /  ${model.title}`, `[ ] ${c[" "]}   [/] ${c["/"]}   [x] ${c.x} `, this.cols);
+    this.header.content = pack(` todo  /  ${model.title}`, `[ ] ${c[" "]}   [/] ${c["/"]}   [x] ${c.x} `, this.cols);
     const project = model.local ? model.scope[0]?.name : undefined;
     const nav = `[g] Overview    [w] In progress    [t] All tasks${project ? `    / ${project}` : ""}`;
     this.nav.content = fit(`${model.focus === "sidebar" ? ">" : " "}${nav}`, this.cols);
@@ -130,7 +130,7 @@ export class CoreApp {
       const c = p.doc ? { " ": p.doc.tasks.filter(t => t.status === " ").length, "/": p.doc.tasks.filter(t => t.status === "/").length, x: p.doc.tasks.filter(t => t.status === "x").length } : null;
       lines.push({ content: pack(`${i === this.model.index ? ">" : " "} ${p.name}`, c ? `${c[" "]}      ${c["/"]}      ${c.x}  ` : "unavailable ", this.listCols), fg: p.error ? color.red : color.ink, bg: i === this.model.index ? color.selected : color.bg });
     }
-    if (!projects.length) lines.push({ content: this.model.projects.length ? " No matching projects · Esc clears search" : " No projects · todox2 add-project /path/to/project", fg: color.amber });
+    if (!projects.length) lines.push({ content: this.model.projects.length ? " No matching projects · Esc clears search" : " No projects · todo add-project /path/to/project", fg: color.amber });
     lines.push({ content: "─".repeat(this.listCols), fg: color.surface });
     lines.push({ content: pack(` IN PROGRESS  ${active.length}`, "w open ", this.listCols), fg: color.cyan });
     for (const row of active.slice(0, Math.max(0, this.listRows - lines.length))) lines.push({ content: fit(` [/] ${row.project.name}  /  ${row.task.text}`, this.listCols), fg: color.ink });

@@ -6,7 +6,7 @@ const cli = resolve(import.meta.dir, "../src/cli.ts");
 const dirs: string[] = [];
 afterEach(() => { for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true }); });
 function fixture() {
-  const cwd = realpathSync(mkdtempSync(join(tmpdir(), "todox2-cli-"))); dirs.push(cwd);
+  const cwd = realpathSync(mkdtempSync(join(tmpdir(), "todo-cli-"))); dirs.push(cwd);
   const config = join(cwd, "registry.json");
   const run = (...args: string[]) => {
     const result = Bun.spawnSync([process.execPath, cli, ...args], { cwd, env: { ...process.env, TODOX_CONFIG: config }, stdout: "pipe", stderr: "pipe" });
@@ -17,6 +17,8 @@ function fixture() {
 test("separate command manages same registry format without overwriting TODO", () => {
   const { cwd, config, run } = fixture();
   expect(run("--version").out.trim()).toBe("0.2.0");
+  expect(run("--help").out).toContain("todo --global");
+  expect(run("bad-argument").err).toContain("todo: Unknown arguments");
   expect(run("init").code).toBe(0); expect(run("init").code).toBe(1);
   const path = join(cwd, "TODO.md");
   writeFileSync(path, "# TODO\n- [ ] Later\n- [/] Now\n- [x] Done\n");

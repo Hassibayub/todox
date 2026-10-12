@@ -2,9 +2,9 @@
 
 A keyboard-driven, Markdown-native todo app for the terminal. Tasks stay in `TODO.md`; there is no database or cloud account. Built directly with [OpenTUI Core](https://github.com/anomalyco/opentui) and [Bun](https://bun.sh/).
 
-The command is **`todox2`**.
+The command is **`todo`**.
 
-![todox2 showing an example project's tasks and selection inspector](assets/screenshot.png)
+![todo showing an example project's tasks and selection inspector](assets/screenshot.png)
 
 *Screenshot generated from the included sample project using OpenTUI's native test renderer.*
 
@@ -19,7 +19,7 @@ npm ci
 bun link
 ```
 
-`bun link` installs `todox2` under `~/.bun/bin`. If your shell cannot find it, add that directory to your `PATH`. Keep the cloned directory: the command links to its source files. After moving the directory, run `bun link` again from its new location.
+`bun link` installs `todo` under `~/.bun/bin`. If your shell cannot find it, add that directory to your `PATH`. Keep the cloned directory: the command links to its source files. After moving the directory, run `bun link` again from its new location.
 
 To try it without installing the command, run `bun run demo` from the clone. The demo uses only the included sample projects and an isolated registry.
 
@@ -27,17 +27,17 @@ To try it without installing the command, run `bun run demo` from the clone. The
 
 ```sh
 cd your-project
-todox2 init                         # create TODO.md here, without overwriting an existing file
-todox2                              # open the nearest TODO.md
+todo init                         # create TODO.md here, without overwriting an existing file
+todo                              # open the nearest TODO.md
 
-todox2 add-project ~/code/my-app     # register an existing TODO.md
-todox2 scan ~/code                   # register immediate child projects
-todox2 --global                      # overview from any directory
-todox2 projects                      # list registered files
-todox2 stats --json                  # counts for scripts
+todo add-project ~/code/my-app     # register an existing TODO.md
+todo scan ~/code                   # register immediate child projects
+todo --global                      # overview from any directory
+todo projects                      # list registered files
+todo stats --json                  # counts for scripts
 ```
 
-With no local `TODO.md`, `todox2` opens the global overview. A local file is registered on first visit. The project list is stored in `~/.config/todox/projects.json` (or `$XDG_CONFIG_HOME/todox/projects.json`); override it with `TODOX_CONFIG`. Each project's `TODO.md` is always the source of task data.
+With no local `TODO.md`, `todo` opens the global overview. A local file is registered on first visit. The project list is stored in `~/.config/todox/projects.json` (or `$XDG_CONFIG_HOME/todox/projects.json`); override it with `TODOX_CONFIG`. Each project's `TODO.md` is always the source of task data.
 
 Tasks use `[ ]` for not started, `[/]` for in progress and `[x]` for completed. Existing notes, comments, formatting, line endings and unrelated Markdown are preserved when editing tasks.
 

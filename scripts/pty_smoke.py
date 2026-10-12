@@ -14,7 +14,7 @@ import termios
 import time
 
 root = Path(__file__).resolve().parent.parent
-with tempfile.TemporaryDirectory(prefix="todox2-pty-") as directory:
+with tempfile.TemporaryDirectory(prefix="todo-pty-") as directory:
     folder = Path(directory)
     todo = folder / "TODO.md"
     todo.write_text("# TODO\n\n## Smoke\n- [/] Verify terminal\n")

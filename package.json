@@ -5,7 +5,7 @@
   "license": "MIT",
   "description": "Markdown-native todo TUI built with OpenTUI Core",
   "type": "module",
-  "bin": { "todox2": "./src/cli.ts" },
+  "bin": { "todo": "./src/cli.ts" },
   "scripts": {
     "start": "bun src/cli.ts",
     "demo": "TODOX_CONFIG=./examples/config.json bun src/cli.ts --global",
