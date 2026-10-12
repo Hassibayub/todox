@@ -1,3 +1,4 @@
+/* Terminal-native: no painted background, no filled selection bar. */
 Screen {
     background: $background;
     color: $text;
@@ -20,28 +21,30 @@ Screen {
 #items {
     height: 1fr;
     width: 100%;
-    background: transparent;
+    background: $background;
     border: none;
     scrollbar-size: 1 1;
+    scrollbar-color: $text;
+    scrollbar-background: $background;
 }
 
 ListItem {
     height: auto;
     min-height: 1;
     padding: 0 1;
-    background: transparent;
+    background: $background;
     color: $text;
 }
 
 ListItem > Static {
     width: 100%;
     height: auto;
-    background: transparent;
+    background: $background;
 }
 
 ListItem.-highlight {
-    background: $primary-background;
-    color: $text;
+    background: $background;
+    text-style: bold;
 }
 
 ListItem.section-row {
@@ -57,34 +60,23 @@ ListItem.conflict-row {
     margin-bottom: 1;
 }
 
-ListItem.task-row {
-    margin-bottom: 0;
-}
-
 #empty {
     height: auto;
     padding: 0 2;
-    color: $text-muted;
+    text-style: dim;
 }
 
 #prompt {
     height: 3;
     border: none;
-    border-top: solid $surface-lighten-2;
-    background: transparent;
-    padding: 0 1;
-}
-
-#prompt:focus {
-    border: none;
-    border-top: solid $primary;
+    background: $background;
+    padding: 0 2;
 }
 
 #footer {
     height: 2;
     width: 100%;
-    border-top: solid $surface-lighten-2;
     padding: 0 1;
-    color: $text-muted;
+    text-style: dim;
     text-overflow: ellipsis;
 }

@@ -1,9 +1,15 @@
-"""Responsive, keyboard-first Textual interface."""
+"""Responsive, keyboard-first Textual interface.
+
+The look is deliberately terminal-native: the ANSI theme leaves the terminal
+background and foreground untouched, secondary text is dim, and the selected
+row is marked with ``>`` instead of a filled bar.
+"""
 from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
 from asyncio import to_thread
+import os
 import subprocess
 import sys
 
@@ -60,6 +66,8 @@ class TodoApp(App[None]):
 
     def __init__(self, local: Path | None = None, registry: Path | None = None):
         super().__init__()
+        # Any Textual theme name works; the default keeps the terminal's own colors.
+        self.theme = os.environ.get("TODOX_THEME", "ansi-dark")
         self.local = local.resolve() if local else None
         self.registry = registry
         self.projects_data: list[Project] = []
@@ -67,6 +75,8 @@ class TodoApp(App[None]):
         self.selected_project: Path | None = self.local
         self.last_project: Path | None = None
         self.rows: list[Row] = []
+        self._row_widgets: list[Static] = []
+        self.selected_index = 0
         self.show_completed = True
         self.show_dates = False
         self.search_query = ""
@@ -156,42 +166,59 @@ class TodoApp(App[None]):
             common[2:2] = ["p / t         Projects / open tasks", "c             Copy project path"]
         return common
 
-    def _render_row(self, row: Row, width: int) -> tuple[Text, str]:
+    def _render_row(self, row: Row, width: int, index: int = 0, selected: bool = False) -> tuple[Text, str]:
+        marker = "> " if selected else "  "
         if row.kind == "help":
-            return Text(self._help_lines()[len(self._rendered_items)], style="dim"), "help-row"
+            return Text(marker + self._help_lines()[index], style="" if selected else "dim"), "help-row"
         if row.kind == "conflict":
             change = row.change
             assert change
             label = change.name or change.project or change.uid
-            return Text.assemble((label + " · ", "dim"), (change.text or change.uid, "bold"), (f"\n{change.reason}", "dim")), "conflict-row"
+            return Text.assemble((marker, "bold" if selected else ""), (label + " · ", "dim"),
+                                 (change.text or change.uid, "bold"), (f"\n  {change.reason}", "dim")), "conflict-row"
         if row.kind == "project":
             p = row.project
             assert p
             if p.error:
-                return Text.assemble((p.name, "bold"), ("  unavailable", "red")), "project-row"
+                return Text.assemble((marker, "bold" if selected else ""), (p.name, "bold"), ("  unavailable", "red")), "project-row"
             tally = counts(list(p.doc.tasks)) if p.doc else {" ": 0, "/": 0, "x": 0}
             summary = f'{tally["x"]} completed  ·  {tally["/"]} in progress  ·  {tally[" "]} todo'
-            if width < 68:
+            if width < 78:
                 compact = f'{tally["x"]} done · {tally["/"]} doing · {tally[" "]} todo'
-                return Text.assemble((p.name + "\n", "bold"), (compact, "dim")), "project-row narrow"
-            label = Text(p.name, style="bold")
-            gap = max(2, width - cell_len(p.name) - cell_len(summary) - 5)
+                return Text.assemble((marker, "bold" if selected else ""), (p.name + "\n", "bold"), ("  " + compact, "dim")), "project-row narrow"
+            label = Text(marker, style="bold" if selected else "")
+            label.append(p.name, style="bold")
+            # Marker, shell padding and list padding all cost cells before the summary.
+            gap = max(2, width - cell_len(p.name) - cell_len(summary) - 5 - 10)
             label.append(" " * gap)
             label.append(summary, style="dim")
             return label, "project-row"
         if row.kind == "section":
-            return Text(row.section.title, style="bold"), "section-row"
+            return Text.assemble((marker, "bold" if selected else ""), (row.section.title, "bold")), "section-row"
         assert row.task and row.project
         t = row.task
-        marker = {" ": "[ ]", "/": "[/]", "x": "[x]"}[t.status]
-        result = Text(marker, style="dim" if t.status == "x" else "bold")
-        result.append("  ")
+        box = {" ": "[ ]", "/": "[/]", "x": "[x]"}[t.status]
+        result = Text(marker, style="bold" if selected else "")
+        result.append(box + "  ", style="dim" if t.status == "x" else "bold")
         if self.page == "tasks":
             result.append(f"{row.project.name} / ", style="dim")
         result.append(t.text, style="dim" if t.status == "x" else "")
         if self.show_dates and t.completed:
             result.append(f" · {t.completed}", style="dim")
         return result, "task-row" + (" done" if t.status == "x" else "")
+
+    def _paint_selection(self) -> None:
+        """Move the ``>`` marker without rebuilding the list on every keypress."""
+        width = self.size.width
+        for index, (row, widget) in enumerate(zip(self.rows, self._row_widgets)):
+            display, _ = self._render_row(row, width, index, index == self.selected_index)
+            widget.update(display)
+
+    async def on_list_view_highlighted(self, event: ListView.Highlighted) -> None:
+        if event.list_view.id != "items":
+            return
+        self.selected_index = event.list_view.index or 0
+        self._paint_selection()
 
     async def draw(self, preserve: bool = False) -> None:
         if not self.is_mounted:
@@ -200,16 +227,21 @@ class TodoApp(App[None]):
         old = self._selected() if preserve else None
         old_index = listing.index or 0
         self.rows = self._rows()
-        self._rendered_items: list[ListItem] = []
+        self._row_widgets = []
+        items: list[ListItem] = []
         width = self.size.width
-        for row in self.rows:
-            display, classes = self._render_row(row, width)
-            self._rendered_items.append(ListItem(Static(display, markup=False), classes=classes))
+        for index, row in enumerate(self.rows):
+            display, classes = self._render_row(row, width, index)
+            widget = Static(display, markup=False)
+            self._row_widgets.append(widget)
+            items.append(ListItem(widget, classes=classes))
         await listing.clear()
-        if self._rendered_items:
-            await listing.extend(self._rendered_items)
+        if items:
+            await listing.extend(items)
             index = self.rows.index(old) if old in self.rows else min(old_index, len(self.rows) - 1) if preserve else 0
             listing.index = index
+            self.selected_index = index
+            self._paint_selection()
         self._update_chrome()
 
     def _update_chrome(self) -> None:

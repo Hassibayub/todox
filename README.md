@@ -66,6 +66,8 @@ Completion adds a visible suffix, for example `- [x] Ship (completed: 2026-10-12
 
 The layout scrolls and reflows with the terminal size. Narrow project rows put counts beneath the name; short screens hide secondary hints, not tasks. Task files retain their line endings and unrelated Markdown. Updates use a cooperative lock, a stale-file check, and atomic replacement.
 
+The interface draws with your terminal's own palette: the ANSI theme leaves the terminal background untouched, secondary text is dim, and the selected row is marked with `>` and bold rather than a filled bar. Set `TODOX_THEME` to any Textual theme name to override it.
+
 ## TickTick sync (optional)
 
 `todox` can mirror tasks to a TickTick account through the official [Open API](https://developer.ticktick.com/docs/index.html#/openapi). Setup needs one personal token; nothing is uploaded until you sync.
