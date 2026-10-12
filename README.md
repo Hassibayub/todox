@@ -82,11 +82,13 @@ todo sync                  # apply
 todo ticktick status       # token and list state
 ```
 
-The token is stored in `~/.config/todox/ticktick.json` with owner-only permissions, or supplied via `TODOX_TICKTICK_TOKEN`. In the TUI, `Y` runs a sync and shows the result in the footer.
+The token is stored in `~/.config/todox/ticktick.json` with owner-only permissions, or supplied via `TODOX_TICKTICK_TOKEN`. With a token in place the app catches up **once at launch**; press `Y` whenever you want to sync again, or set `TODOX_AUTO_SYNC=0` to start quietly instead.
 
 **Mapping.** Sync uses one dedicated TickTick list named `TODO.md` (created on first sync). Each registered project name becomes a task tag, so `web-app/TODO.md` becomes the `web-app` tag. `[ ]` and `[/]` stay open in TickTick, with `[/]` also carrying an `inprogress` tag because TickTick has no in-progress state; `[x]` becomes completed and `(completed: …)` supplies the date. Sections stay local.
 
 **Safety.** Only tasks this tool linked are ever updated. Either side changing alone propagates; both sides changing pauses as a conflict. Nothing is deleted on the other side unless you pass `--allow-deletes` or confirm in the app. Existing TickTick tasks are never imported unless they sit in the `TODO.md` list carrying a matching project tag, and unrecognised tags are reported instead of guessed.
+
+TickTick offers no webhooks, so refresh happens when the app starts or when you press `Y`; nothing polls in the background.
 
 **Conflicts.** `todo sync --json` lists them; resolve one with `todo sync --keep-local <uid>` or `todo sync --keep-remote <uid>`. In the TUI the conflict screen uses `1` for your file and `2` for TickTick. Each synced task carries a hidden `<!-- todox:id=… -->` marker so text edits and line moves stay matched.
 

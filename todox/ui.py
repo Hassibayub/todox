@@ -102,6 +102,8 @@ class TodoApp(App[None]):
         self.query_one("#prompt", Input).display = False
         await self.draw()
         self.query_one("#items", ListView).focus()
+        if self.auto_sync_enabled:
+            self.run_worker(self.auto_sync(), exclusive=True)
 
     def _reload_data(self) -> None:
         try:
@@ -119,6 +121,18 @@ class TodoApp(App[None]):
     def _selected(self) -> Row | None:
         index = self.query_one("#items", ListView).index
         return self.rows[index] if index is not None and 0 <= index < len(self.rows) else None
+
+    @property
+    def auto_sync_enabled(self) -> bool:
+        return os.environ.get("TODOX_AUTO_SYNC", "1").strip().lower() not in {"0", "false", "off", "no"}
+
+    async def auto_sync(self) -> None:
+        """Quietly catch up with TickTick once at startup; silence if unconfigured."""
+        try:
+            client = TickTick(Auth.load().require_token())
+        except (OSError, ValueError, TickTickError):
+            return
+        await self._sync(client, announce=False)
 
     def _task_rows(self, project: Project) -> list[Row]:
         if not project.doc:
@@ -570,10 +584,7 @@ class TodoApp(App[None]):
             self.message = str(exc)
             self._update_chrome()
             return
-        self.sync_running = True
-        self.message = "Syncing with TickTick…"
-        self._update_chrome()
-        self.run_worker(self._sync_worker(client), exclusive=True)
+        self.run_worker(self._sync(client, announce=True), exclusive=True)
 
     def _sync_blocking(self, client: TickTick) -> tuple[Sync, object]:
         engine = Sync(client)
@@ -582,7 +593,13 @@ class TodoApp(App[None]):
         engine.apply(plan)
         return engine, plan
 
-    async def _sync_worker(self, client: TickTick) -> None:
+    async def _sync(self, client: TickTick, announce: bool) -> None:
+        if self.sync_running:
+            return
+        self.sync_running = True
+        if announce:
+            self.message = "Syncing with TickTick…"
+            self._update_chrome()
         try:
             engine, plan = await to_thread(self._sync_blocking, client)
         except (OSError, ValueError, TickTickError) as exc:
@@ -594,12 +611,15 @@ class TodoApp(App[None]):
         self._engine = engine
         self._reload_data()
         tally = plan.summary()
-        self.message = "Synced · " + (", ".join(f"{count} {name}" for name, count in sorted(tally.items())) if tally else "already in sync")
         failures = [change for change in plan.changes if change.error]
-        if failures:
-            self.message += f" · {len(failures)} failed"
         self.conflicts = [change for change in plan.changes if change.action == "conflict"]
-        if self.conflicts:
+        if announce or tally or failures or self.conflicts:
+            self.message = "Synced · " + (", ".join(f"{count} {name}" for name, count in sorted(tally.items())) if tally else "no changes")
+            if failures:
+                self.message += f" · {len(failures)} failed"
+            if self.conflicts:
+                self.message += f" · {len(self.conflicts)} conflict" + ("s" if len(self.conflicts) > 1 else "")
+        if self.conflicts and announce:
             self._return_page = self.page if self.page != "conflicts" else self._return_page
             self.page = "conflicts"
         await self.draw()

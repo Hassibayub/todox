@@ -10,6 +10,12 @@ from todox.ticktick import TickTick, TickTickError
 TODO = "# TODO\n- [ ] Alpha\n## Work\n- [/] Beta\n- [x] Done (completed: 2026-10-10)\n"
 
 
+@pytest.fixture(autouse=True)
+def no_auto_sync(monkeypatch):
+    """Tests drive sync explicitly; launch sync would double-run and hit the network."""
+    monkeypatch.setenv("TODOX_AUTO_SYNC", "0")
+
+
 class FakeTickTick(TickTick):
     """In-memory stand-in for the documented endpoints."""
 

@@ -90,6 +90,38 @@ async def test_local_status_dates_visibility_and_search(workspace):
 
 
 @pytest.mark.asyncio
+async def test_sync_on_launch_when_configured(workspace, monkeypatch, tmp_path):
+    file, config = workspace
+    monkeypatch.setenv("TODOX_SYNC_STATE", str(tmp_path / "sync.json"))
+    monkeypatch.setenv("TODOX_AUTO_SYNC", "1")
+    import todox.ui as ui
+    from todox.ticktick import Auth
+    from tests_py.conftest import FakeTickTick
+
+    fake = FakeTickTick()
+    monkeypatch.setattr(ui, "TickTick", lambda token: fake)
+    monkeypatch.setattr(ui.Auth, "load", classmethod(lambda cls, path=None: Auth("token", "list1")))
+    app = TodoApp(local=file, registry=config)
+    async with app.run_test(size=(60, 12)) as pilot:
+        await pilot.pause(0.6)
+        assert "create" in app.message
+        assert [t["title"] for t in fake.tasks] == ["Main task", "Active", "Old"]
+        assert "<!-- todox:id=" in file.read_text()
+
+
+@pytest.mark.asyncio
+async def test_launch_sync_stays_quiet_without_a_token(workspace, monkeypatch):
+    file, config = workspace
+    monkeypatch.setenv("TODOX_AUTO_SYNC", "1")
+    monkeypatch.delenv("TODOX_TICKTICK_TOKEN", raising=False)
+    monkeypatch.setenv("TODOX_TICKTICK_CONFIG", str(Path(file).parent / "missing.json"))
+    app = TodoApp(local=file, registry=config)
+    async with app.run_test(size=(60, 12)) as pilot:
+        await pilot.pause(0.4)
+        assert app.message == "" and app.page == "detail"
+
+
+@pytest.mark.asyncio
 async def test_sync_from_the_tui_reports_and_resolves_conflicts(workspace, monkeypatch, tmp_path):
     file, config = workspace
     monkeypatch.setenv("TODOX_SYNC_STATE", str(tmp_path / "sync.json"))
