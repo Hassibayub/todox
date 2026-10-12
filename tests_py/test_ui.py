@@ -101,19 +101,39 @@ async def test_sync_from_the_tui_reports_and_resolves_conflicts(workspace, monke
     monkeypatch.setattr(ui, "TickTick", lambda token: fake)
     monkeypatch.setattr(ui.Auth, "load", classmethod(lambda cls, path=None: Auth("token", "list1")))
     app = TodoApp(local=file, registry=config)
+    monkeypatch.setattr(TodoApp, "_copy", lambda self, text: True)
     async with app.run_test(size=(60, 14)) as pilot:
-        await pilot.press("y")
+        await pilot.press("Y")
         await pilot.pause(0.5)
         assert "create" in app.message and "<!-- todox:id=" in file.read_text()
         fake.tasks[0]["title"] = "Remote rename"
         file.write_text(file.read_text().replace("Main task", "Local rename"))
-        await pilot.press("y")
+        await pilot.press("Y")
         await pilot.pause(0.5)
         assert app.page == "conflicts" and len(app.rows) == 1
         assert "1 keep local" in str(app.query_one("#footer").render())
         await pilot.press("2")
         await pilot.pause(0.5)
         assert app.page == "detail" and "Remote rename" in file.read_text()
+
+
+@pytest.mark.asyncio
+async def test_y_copies_the_selected_task_and_section(workspace, monkeypatch):
+    file, config = workspace
+    copied: list[str] = []
+    monkeypatch.setattr(TodoApp, "_copy", lambda self, text: bool(copied.append(text)) or True)
+    app = TodoApp(local=file, registry=config)
+    async with app.run_test(size=(60, 14)) as pilot:
+        await pilot.press("y")
+        assert copied[-1] == "Main task" and app.message == "Task copied"
+        index = next(i for i, row in enumerate(app.rows) if row.kind == "section")
+        app.query_one("#items").index = index
+        await pilot.pause(0.1)
+        await pilot.press("y")
+        assert copied[-1] == "Work" and app.message == "Section name copied"
+        # a task on the global task list copies its own text
+        await pilot.press("escape")
+        assert copied
 
 
 @pytest.mark.asyncio

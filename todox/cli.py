@@ -33,7 +33,7 @@ def run(args: list[str] | None = None, cwd: Path | None = None) -> int:
         print(HELP)
         return 0
     if command == "--version":
-        print("0.4.1")
+        print("0.4.2")
         return 0
     if command == "init" and len(args) == 1:
         path = cwd / "TODO.md"

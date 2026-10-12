@@ -59,7 +59,8 @@ A normal `todo` invocation opens the local file if one exists; from that screen 
 | `x`, `Backspace` | Delete a task or remove an empty section (confirmation required) |
 | `/`, `Esc` | Search; clear search or return from a global project |
 | `o` | Open selected task in Neovim |
-| `y` | Sync with TickTick |
+| `y` | Copy the selected task text (section name or project path on those rows) |
+| `Y` | Sync with TickTick |
 | `r`, `?`, `q` | Reload, help, quit |
 
 Completion adds a visible suffix, for example `- [x] Ship (completed: 2026-10-12)`. Moving the task back to todo or in progress removes the suffix. `d` only changes whether the app displays that date; it never removes it from the file. Existing files without dates still work.
@@ -81,7 +82,7 @@ todo sync                  # apply
 todo ticktick status       # token and list state
 ```
 
-The token is stored in `~/.config/todox/ticktick.json` with owner-only permissions, or supplied via `TODOX_TICKTICK_TOKEN`. In the TUI, `y` runs a sync and shows the result in the footer.
+The token is stored in `~/.config/todox/ticktick.json` with owner-only permissions, or supplied via `TODOX_TICKTICK_TOKEN`. In the TUI, `Y` runs a sync and shows the result in the footer.
 
 **Mapping.** Sync uses one dedicated TickTick list named `TODO.md` (created on first sync). Each registered project name becomes a task tag, so `web-app/TODO.md` becomes the `web-app` tag. `[ ]` and `[/]` stay open in TickTick, with `[/]` also carrying an `inprogress` tag because TickTick has no in-progress state; `[x]` becomes completed and `(completed: …)` supplies the date. Sections stay local.
 

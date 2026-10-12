@@ -57,7 +57,8 @@ class TodoApp(App[None]):
         Binding("backspace", "remove_section", "Remove section", show=False),
         Binding("o", "open_editor", "Neovim", show=False),
         Binding("slash", "search", "Search", show=False),
-        Binding("y", "sync", "Sync", show=False),
+        Binding("y", "copy_task", "Copy task", show=False),
+        Binding("Y", "sync", "Sync", show=False),
         Binding("r", "reload", "Reload", show=False),
         Binding("question_mark", "help", "Help", show=False),
         Binding("escape", "back", "Back", show=False),
@@ -151,7 +152,7 @@ class TodoApp(App[None]):
             common = ["j/k, ↑↓  Move", "Enter  Open / edit", "n  New task", "e  Edit task",
                       "Space, 1–3  Status", "u  Toggle completed", "d  Toggle dates",
                       "s  New section", "x  Delete task", "Backspace  Remove section",
-                      "/  Search", "o  Neovim", "y  Sync TickTick", "r  Refresh", "Esc  Back", "q  Quit"]
+                      "/  Search", "o  Neovim", "y  Copy task", "Y  Sync TickTick", "r  Refresh", "Esc  Back", "q  Quit"]
             if not self.local:
                 common[2:2] = ["p/t  Projects / tasks", "c  Copy path"]
             return common
@@ -161,7 +162,8 @@ class TodoApp(App[None]):
                   "d             Show / hide dates", "s             Add ## section",
                   "x             Delete task (confirm)", "Backspace     Remove empty section",
                   "o             Open task in Neovim", "/             Search; Esc clears",
-                  "y             Sync with TickTick", "r             Refresh TODO.md", "? / Esc       Close help", "q             Quit"]
+                  "y             Copy selected task", "Y             Sync with TickTick",
+                  "r             Refresh TODO.md", "? / Esc       Close help", "q             Quit"]
         if not self.local:
             common[2:2] = ["p / t         Projects / open tasks", "c             Copy project path"]
         return common
@@ -271,7 +273,7 @@ class TodoApp(App[None]):
         elif self.page == "tasks":
             hint = "Enter open project   p projects   t tasks   ? keys"
         elif self.page == "detail":
-            hint = "n new   e edit   u completed   d dates   y sync   ? keys" + ("   p projects" if not self.local else "")
+            hint = "n new   e edit   y copy   u completed   d dates   ? keys" + ("   p projects" if not self.local else "")
         elif self.page == "conflicts":
             hint = "1 keep local   2 keep remote   Esc back"
         else:
@@ -368,20 +370,41 @@ class TodoApp(App[None]):
             self.message = ""
             await self.draw()
 
+    def _copy(self, text: str) -> bool:
+        try:
+            if sys.platform == "darwin":
+                subprocess.run(["pbcopy"], input=text, text=True, check=True, timeout=2)
+            else:
+                self.copy_to_clipboard(text)
+            return True
+        except (OSError, subprocess.SubprocessError):
+            return False
+
+    def action_copy_task(self) -> None:
+        """Copy the selected task's text, a section name, or a project path."""
+        if self.prompt_kind or self.page == "conflicts":
+            return
+        row = self._selected()
+        if not row:
+            return
+        if row.kind == "task" and row.task:
+            text, label = row.task.text, "Task copied"
+        elif row.kind == "section" and row.section:
+            text, label = row.section.title, "Section name copied"
+        elif row.project:
+            text, label = str(row.project.path.parent), "Project path copied"
+        else:
+            return
+        self.message = label if self._copy(text) else f"Clipboard unavailable · {text}"
+        self._update_chrome()
+
     def action_copy_path(self) -> None:
         row = self._selected()
         project = row.project if row and row.kind == "project" else self._project()
         if not project:
             return
         path = str(project.path.parent)
-        try:
-            if sys.platform == "darwin":
-                subprocess.run(["pbcopy"], input=path, text=True, check=True, timeout=2)
-            else:
-                self.copy_to_clipboard(path)
-            self.message = "Project path copied"
-        except (OSError, subprocess.SubprocessError):
-            self.message = "Clipboard unavailable · project path: " + path
+        self.message = "Project path copied" if self._copy(path) else "Clipboard unavailable · project path: " + path
         self._update_chrome()
 
     def action_toggle_completed(self) -> None:
