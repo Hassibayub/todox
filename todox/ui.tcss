@@ -7,7 +7,6 @@ Screen {
 
 #shell {
     width: 100%;
-    max-width: 100;
     height: 100%;
     padding: 0 1;
 }
@@ -36,10 +35,31 @@ ListItem {
     color: $text;
 }
 
-ListItem > Static {
+/* A row is either one Static, or a marker beside a body that wraps with a hanging indent. */
+ListItem > Static,
+ListItem > Horizontal.row-line {
     width: 100%;
     height: auto;
     background: $background;
+}
+
+Horizontal.row-line > Static {
+    height: auto;
+    background: $background;
+}
+
+Horizontal.row-line > .row-marker {
+    width: auto;
+}
+
+Horizontal.row-line > .row-body {
+    width: 1fr;
+}
+
+/* w: unwrapped rows stay on one line and end in an ellipsis. */
+ListItem.unwrap Horizontal.row-line > .row-body {
+    text-wrap: nowrap;
+    text-overflow: ellipsis;
 }
 
 ListItem.-highlight {

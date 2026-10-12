@@ -74,9 +74,10 @@ A normal `todo` invocation opens the local file if one exists; from that screen 
 | `Space`, `1/2/3` | Cycle or set todo / in progress / completed |
 | `u` | Hide or show completed tasks |
 | `d` | Hide or show completion dates in the UI |
+| `w` | Wrap long rows, or clip them to one line with `…` |
 | `s` | Add a `##` section |
 | `x`, `Backspace` | Delete a task or remove an empty section (confirmation required) |
-| `/`, `Esc` | Search; clear search or return from a global project |
+| `/`, `Esc` | Search; clear search, dismiss the status line, or return from a global project |
 | `o` | Open selected task in Neovim |
 | `y` | Copy the selected task text (section name or project path on those rows) |
 | `Y` | Sync with TickTick |
@@ -84,7 +85,7 @@ A normal `todo` invocation opens the local file if one exists; from that screen 
 
 Completion adds a visible suffix, for example `- [x] Ship (completed: 2026-10-12)`. Moving the task back to todo or in progress removes the suffix. `d` only changes whether the app displays that date; it never removes it from the file. Existing files without dates still work.
 
-The layout scrolls and reflows with the terminal size. Narrow project rows put counts beneath the name; short screens hide secondary hints, not tasks. Task files retain their line endings and unrelated Markdown. Updates use a cooperative lock, a stale-file check, and atomic replacement.
+The layout scrolls and reflows with the terminal size, using the full width of the window; long rows wrap and their continuation lines line up under the task text instead of snapping back to the left edge. `w` switches wrapping off so each row stays on one line and ends in `…`, and `TODOX_WRAP=0` starts that way. Narrow project rows put counts beneath the name; short screens hide secondary hints, not tasks. Task files retain their line endings and unrelated Markdown. Updates use a cooperative lock, a stale-file check, and atomic replacement.
 
 The interface draws with your terminal's own palette: the ANSI theme leaves the terminal background untouched, secondary text is dim, and the selected row is marked with `>` and bold rather than a filled bar. Set `TODOX_THEME` to any Textual theme name to override it.
 

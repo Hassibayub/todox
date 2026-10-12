@@ -18,7 +18,7 @@ from rich.text import Text
 from textual import on
 from textual.app import App, ComposeResult
 from textual.binding import Binding
-from textual.containers import Vertical
+from textual.containers import Horizontal, Vertical
 from textual.events import Resize
 from textual.widgets import Input, ListItem, ListView, Static
 
@@ -37,6 +37,22 @@ class Row:
     change: Change | None = None
 
 
+@dataclass(frozen=True)
+class RowRender:
+    """A row's body, plus the optional fixed marker that indents it when it wraps."""
+    body: Text
+    classes: str
+    marker: Text | None = None
+
+
+@dataclass
+class RowWidgets:
+    """Live widgets behind a row, so selection repaints without rebuilding the list."""
+    item: ListItem
+    body: Static
+    marker: Static | None = None
+
+
 class TodoApp(App[None]):
     CSS_PATH = "ui.tcss"
     TITLE = "todo"
@@ -45,6 +61,7 @@ class TodoApp(App[None]):
         Binding("e", "edit_task", "Edit", show=False),
         Binding("u", "toggle_completed", "Completed", show=False),
         Binding("d", "toggle_dates", "Dates", show=False),
+        Binding("w", "toggle_wrap", "Wrap", show=False),
         Binding("p", "projects", "Projects", show=False),
         Binding("t", "tasks", "Tasks", show=False),
         Binding("c", "copy_path", "Copy path", show=False),
@@ -76,10 +93,12 @@ class TodoApp(App[None]):
         self.selected_project: Path | None = self.local
         self.last_project: Path | None = None
         self.rows: list[Row] = []
-        self._row_widgets: list[Static] = []
+        self._row_widgets: list[RowWidgets] = []
         self.selected_index = 0
         self.show_completed = True
         self.show_dates = False
+        # TODOX_WRAP=0 opens with long rows clipped to one line instead of wrapped.
+        self.wrap = os.environ.get("TODOX_WRAP", "1").strip().lower() not in {"0", "false", "off", "no"}
         self.search_query = ""
         self.prompt_kind: str | None = None
         self.prompt_row: Row | None = None
@@ -164,71 +183,79 @@ class TodoApp(App[None]):
     def _help_lines(self) -> list[str]:
         if self.size.width < 42:
             common = ["j/k, ↑↓  Move", "Enter  Open / edit", "n  New task", "e  Edit task",
-                      "Space, 1–3  Status", "u  Toggle completed", "d  Toggle dates",
+                      "Space, 1–3  Status", "u  Toggle completed", "d  Toggle dates", "w  Wrap text",
                       "s  New section", "x  Delete task", "Backspace  Remove section",
-                      "/  Search", "o  Neovim", "y  Copy task", "Y  Sync TickTick", "r  Refresh", "Esc  Back", "q  Quit"]
+                      "/  Search", "o  Neovim", "y  Copy task", "Y  Sync TickTick", "r  Refresh", "Esc  Back · clear status", "q  Quit"]
             if not self.local:
                 common[2:2] = ["p/t  Projects / tasks", "c  Copy path"]
             return common
         common = ["j/k, ↑↓       Move", "Enter         Open project / edit task",
                   "n             New task (selected section)", "e             Edit task",
                   "Space, 1–3    Change status", "u             Show / hide completed",
-                  "d             Show / hide dates", "s             Add ## section",
+                  "d             Show / hide dates", "w             Wrap / clip long rows", "s             Add ## section",
                   "x             Delete task (confirm)", "Backspace     Remove empty section",
                   "o             Open task in Neovim", "/             Search; Esc clears",
                   "y             Copy selected task", "Y             Sync with TickTick",
-                  "r             Refresh TODO.md", "? / Esc       Close help", "q             Quit"]
+                  "r             Refresh TODO.md", "? / Esc       Close help · clear status", "q             Quit"]
         if not self.local:
             common[2:2] = ["p / t         Projects / open tasks", "c             Copy project path"]
         return common
 
-    def _render_row(self, row: Row, width: int, index: int = 0, selected: bool = False) -> tuple[Text, str]:
+    def _render_row(self, row: Row, width: int, index: int = 0, selected: bool = False) -> RowRender:
         marker = "> " if selected else "  "
         if row.kind == "help":
-            return Text(marker + self._help_lines()[index], style="" if selected else "dim"), "help-row"
+            return RowRender(Text(marker + self._help_lines()[index], style="" if selected else "dim"), "help-row")
         if row.kind == "conflict":
             change = row.change
             assert change
             label = change.name or change.project or change.uid
-            return Text.assemble((marker, "bold" if selected else ""), (label + " · ", "dim"),
-                                 (change.text or change.uid, "bold"), (f"\n  {change.reason}", "dim")), "conflict-row"
+            body = Text.assemble((marker, "bold" if selected else ""), (label + " · ", "dim"),
+                                 (change.text or change.uid, "bold"), (f"\n  {change.reason}", "dim"))
+            return RowRender(body, "conflict-row")
         if row.kind == "project":
             p = row.project
             assert p
             if p.error:
-                return Text.assemble((marker, "bold" if selected else ""), (p.name, "bold"), ("  unavailable", "red")), "project-row"
+                unavailable = Text.assemble((marker, "bold" if selected else ""), (p.name, "bold"), ("  unavailable", "red"))
+                return RowRender(unavailable, "project-row")
             tally = counts(list(p.doc.tasks)) if p.doc else {" ": 0, "/": 0, "x": 0}
             summary = f'{tally["x"]} completed  ·  {tally["/"]} in progress  ·  {tally[" "]} todo'
             if width < 78:
                 compact = f'{tally["x"]} done · {tally["/"]} doing · {tally[" "]} todo'
-                return Text.assemble((marker, "bold" if selected else ""), (p.name + "\n", "bold"), ("  " + compact, "dim")), "project-row narrow"
+                narrow = Text.assemble((marker, "bold" if selected else ""), (p.name + "\n", "bold"), ("  " + compact, "dim"))
+                return RowRender(narrow, "project-row narrow")
             label = Text(marker, style="bold" if selected else "")
             label.append(p.name, style="bold")
             # Marker, shell padding and list padding all cost cells before the summary.
             gap = max(2, width - cell_len(p.name) - cell_len(summary) - 5 - 10)
             label.append(" " * gap)
             label.append(summary, style="dim")
-            return label, "project-row"
+            return RowRender(label, "project-row")
         if row.kind == "section":
-            return Text.assemble((marker, "bold" if selected else ""), (row.section.title, "bold")), "section-row"
+            section = row.section
+            assert section
+            return RowRender(Text(section.title, style="bold"), "section-row", Text(marker, style="bold" if selected else ""))
         assert row.task and row.project
         t = row.task
         box = {" ": "[ ]", "/": "[/]", "x": "[x]"}[t.status]
-        result = Text(marker, style="bold" if selected else "")
-        result.append(box + "  ", style="dim" if t.status == "x" else "bold")
+        prefix = Text(marker, style="bold" if selected else "")
+        prefix.append(box + "  ", style="dim" if t.status == "x" else "bold")
+        body = Text()
         if self.page == "tasks":
-            result.append(f"{row.project.name} / ", style="dim")
-        result.append(t.text, style="dim" if t.status == "x" else "")
+            body.append(f"{row.project.name} / ", style="dim")
+        body.append(t.text, style="dim" if t.status == "x" else "")
         if self.show_dates and t.completed:
-            result.append(f" · {t.completed}", style="dim")
-        return result, "task-row" + (" done" if t.status == "x" else "")
+            body.append(f" · {t.completed}", style="dim")
+        return RowRender(body, "task-row" + (" done" if t.status == "x" else ""), prefix)
 
     def _paint_selection(self) -> None:
         """Move the ``>`` marker without rebuilding the list on every keypress."""
         width = self.size.width
-        for index, (row, widget) in enumerate(zip(self.rows, self._row_widgets)):
-            display, _ = self._render_row(row, width, index, index == self.selected_index)
-            widget.update(display)
+        for index, (row, widgets) in enumerate(zip(self.rows, self._row_widgets)):
+            rendered = self._render_row(row, width, index, index == self.selected_index)
+            widgets.body.update(rendered.body)
+            if widgets.marker is not None:
+                widgets.marker.update(rendered.marker or Text())
 
     async def on_list_view_highlighted(self, event: ListView.Highlighted) -> None:
         if event.list_view.id != "items":
@@ -247,10 +274,19 @@ class TodoApp(App[None]):
         items: list[ListItem] = []
         width = self.size.width
         for index, row in enumerate(self.rows):
-            display, classes = self._render_row(row, width, index)
-            widget = Static(display, markup=False)
-            self._row_widgets.append(widget)
-            items.append(ListItem(widget, classes=classes))
+            rendered = self._render_row(row, width, index)
+            # ``unwrap`` clips long rows to one line; wrapping is the default.
+            classes = rendered.classes if self.wrap else rendered.classes + " unwrap"
+            if rendered.marker is None:
+                body = Static(rendered.body, markup=False)
+                item = ListItem(body, classes=classes)
+                self._row_widgets.append(RowWidgets(item, body))
+            else:
+                marker = Static(rendered.marker, markup=False, classes="row-marker")
+                body = Static(rendered.body, markup=False, classes="row-body")
+                item = ListItem(Horizontal(marker, body, classes="row-line"), classes=classes)
+                self._row_widgets.append(RowWidgets(item, body, marker))
+            items.append(item)
         await listing.clear()
         if items:
             await listing.extend(items)
@@ -285,9 +321,9 @@ class TodoApp(App[None]):
         elif self.page == "projects":
             hint = "c copy path   Enter open   p projects   t tasks   ? keys"
         elif self.page == "tasks":
-            hint = "Enter open project   p projects   t tasks   ? keys"
+            hint = "Enter open project   p projects   w wrap   ? keys"
         elif self.page == "detail":
-            hint = "n new   e edit   y copy   u completed   d dates   ? keys" + ("   p projects" if not self.local else "")
+            hint = "n new   e edit   y copy   u completed   d dates   w wrap   ? keys" + ("   p projects" if not self.local else "")
         elif self.page == "conflicts":
             hint = "1 keep local   2 keep remote   Esc back"
         else:
@@ -372,6 +408,10 @@ class TodoApp(App[None]):
             await self.draw()
         elif not self.local and self.page != "projects":
             await self._navigate("projects")
+        elif self.message:
+            # Dismiss the status line so the key hints come back; nothing else is pending.
+            self.message = ""
+            self._update_chrome()
 
     async def action_help(self) -> None:
         if self.prompt_kind:
@@ -433,6 +473,13 @@ class TodoApp(App[None]):
             return
         self.show_dates = not self.show_dates
         self.message = "Dates visible" if self.show_dates else "Dates hidden"
+        self.run_worker(self.draw(preserve=True), exclusive=True)
+
+    def action_toggle_wrap(self) -> None:
+        if self.page not in {"detail", "tasks"} or self.prompt_kind:
+            return
+        self.wrap = not self.wrap
+        self.message = "Wrapping long rows" if self.wrap else "Clipping long rows"
         self.run_worker(self.draw(preserve=True), exclusive=True)
 
     def _open_prompt(self, kind: str, row: Row | None = None, value: str = "") -> None:

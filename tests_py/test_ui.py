@@ -3,6 +3,8 @@ from pathlib import Path
 
 import pytest
 
+from rich.cells import cell_len
+
 from todox.ui import TodoApp
 
 
@@ -186,3 +188,100 @@ async def test_help_section_delete_and_tiny_layout(workspace):
         await pilot.press(*"DELETE", "enter")
         assert "Main task" not in file.read_text()
         assert app.page == "detail"
+
+
+@pytest.mark.asyncio
+async def test_escape_dismisses_the_status_line_and_restores_hints(workspace):
+    """A local project cannot navigate away, so Esc must still release the footer."""
+    file, config = workspace
+    app = TodoApp(local=file, registry=config)
+    async with app.run_test(size=(60, 14)) as pilot:
+        await pilot.press("d")
+        assert app.message == "Dates visible" and "Dates visible" in str(app.query_one("#footer").render())
+        await pilot.press("escape")
+        assert app.page == "detail" and app.message == ""
+        assert "d dates" in str(app.query_one("#footer").render())
+        # A later action still reports, and Esc clears it again.
+        await pilot.press("u")
+        assert app.message == "Completed hidden"
+        await pilot.press("escape")
+        assert app.message == ""
+
+
+@pytest.fixture
+def long_task(tmp_path: Path):
+    """A project whose first task is far longer than a narrow terminal row."""
+    text = ("stop fake voicemail verdicts — agent declares voicemail with zero words captured "
+            "and the false-positive correction never fires")
+    folder = tmp_path / "long"
+    folder.mkdir()
+    file = folder / "TODO.md"
+    file.write_text(f"- [ ] {text}\n## Work\n- [ ] short\n")
+    config = tmp_path / "projects.json"
+    config.write_text(json.dumps({"version": 1, "projects": [{"name": "long", "path": str(file)}]}))
+    return file, config, text
+
+
+def _row_parts(app, index: int = 0):
+    """The marker and wrapping body widgets of a rendered task row."""
+    line = app.query_one("#items").children[index].children[0]
+    assert type(line).__name__ == "Horizontal", "task rows render a marker beside a body"
+    marker, body = line.children
+    return marker, body
+
+
+@pytest.mark.asyncio
+async def test_rows_use_the_whole_terminal_width(long_task):
+    file, config, text = long_task
+    app = TodoApp(local=file, registry=config)
+    async with app.run_test(size=(200, 20)) as pilot:
+        await pilot.pause(0.1)
+        assert app.query_one("#shell").size.width == 198  # no 100-cell cap
+        assert app.query_one("#items").size.width == 198
+        marker, body = _row_parts(app)
+        assert marker.render_line(0).text == "> [ ]  "  # the highlighted first row keeps its marker
+        assert body.size.width == 189  # list and item padding plus the marker
+        assert body.size.height == 1 and body.render_line(0).text == text
+
+
+@pytest.mark.asyncio
+async def test_wrapped_rows_hang_under_the_task_text(long_task):
+    file, config, text = long_task
+    app = TodoApp(local=file, registry=config)
+    async with app.run_test(size=(60, 16)) as pilot:
+        await pilot.pause(0.1)
+        _, body = _row_parts(app)
+        lines = [body.render_line(y).text for y in range(body.size.height)]
+        assert len(lines) > 1
+        # The marker column supplies the indent, so no continuation line starts with a space.
+        assert lines[0].startswith(text[:12]) and all(not line.startswith(" ") for line in lines)
+        assert " ".join(lines) == text  # word wrap keeps every word, in order
+        assert max(cell_len(line) for line in lines) <= body.size.width
+
+
+@pytest.mark.asyncio
+async def test_w_switches_between_wrapping_and_clipping(long_task):
+    file, config, text = long_task
+    app = TodoApp(local=file, registry=config)
+    async with app.run_test(size=(60, 16)) as pilot:
+        await pilot.pause(0.1)
+        await pilot.press("w")
+        _, body = _row_parts(app)
+        assert app.wrap is False and app.message == "Clipping long rows"
+        assert body.size.height == 1
+        clipped = body.render_line(0).text
+        assert clipped.endswith("…") and clipped[:-1] in text and text not in clipped
+        await pilot.press("w")
+        _, body = _row_parts(app)
+        assert app.wrap is True and app.message == "Wrapping long rows" and body.size.height > 1
+
+
+@pytest.mark.asyncio
+async def test_wrap_can_start_clipped_from_the_environment(long_task, monkeypatch):
+    file, config, _ = long_task
+    monkeypatch.setenv("TODOX_WRAP", "0")
+    app = TodoApp(local=file, registry=config)
+    async with app.run_test(size=(60, 16)) as pilot:
+        await pilot.pause(0.1)
+        _, body = _row_parts(app)
+        assert app.wrap is False and body.size.height == 1 and body.render_line(0).text.endswith("…")

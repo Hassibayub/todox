@@ -4,6 +4,12 @@ All notable changes to this project are recorded here. Versions follow [semantic
 
 The distribution is named `todox-tui` (the PyPI name `todox` belongs to an unrelated project); the import package is `todox` and the command is `todo`.
 
+## Unreleased
+
+- `Esc` now dismisses the status line (`Dates visible`, `Task copied`, `Sync failed · …`), so the key hints come back. On a local project screen `Esc` had nothing else to do and a status message stayed on screen until another action replaced it.
+- Rows use the full terminal width instead of a centered 100-cell column, and a wrapped row's continuation lines line up under its own text instead of starting at the left edge. The wrap is structural: the checkbox is its own column and the text wraps beside it.
+- `w` switches long rows between wrapping and one-line clipping, ending in `…`; `TODOX_WRAP=0` starts clipped. Section titles and the global task list follow the same setting.
+
 ## 0.4.4
 
 - Sync with TickTick once when the app starts, staying silent when nothing changed and never opening the conflict screen from a launch sync. `Y` still syncs on demand; `TODOX_AUTO_SYNC=0` starts quietly.
