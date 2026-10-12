@@ -59,6 +59,7 @@ def test_cli_sync_dry_run_json(tmp_path: Path, monkeypatch, capsys):
     config = tmp_path / "projects.json"
     config.write_text(json.dumps({"version": 1, "projects": [{"name": "web-app", "path": str(file)}]}))
     monkeypatch.setenv("TODOX_CONFIG", str(config))
+    monkeypatch.setenv("TODOX_SYNC_STATE", str(tmp_path / "sync.json"))
     monkeypatch.setenv("TODOX_TICKTICK_TOKEN", "test-token")
     fake = FakeTickTick()
     monkeypatch.setattr(TickTick, "_call", fake._call)
