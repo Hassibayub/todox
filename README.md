@@ -60,7 +60,7 @@ Tasks use `[ ]` for not started, `[/]` for in progress and `[x]` for completed. 
 
 Section removal is **empty-only**: tasks, notes, comments, code blocks and nested headings block it. The document title and implicit General group are protected. Writes use cooperative locks, atomic replacement and stale-file checks to avoid overwriting external changes.
 
-The UI uses your terminal's default foreground/background and ANSI palette, so it follows light or dark terminal themes without an app setting. The layout fits compact terminals; at 104+ columns, an inspector shows the current selection. Completed tasks fold in the unfiltered view, while search and filters reveal matches. There is no automatic file watcher, undo, cloud sync or packaged standalone binary.
+At startup the UI queries your terminal's foreground, background and ANSI palette, then explicitly paints the canvas so split panes and full-screen views stay consistent. Restart `todo` after changing your terminal theme. If color replies are unavailable, it uses a neutral dark fallback (or a light fallback when the terminal reports light mode). The layout fits compact terminals; at 104+ columns, an inspector shows the current selection. Completed tasks fold in the unfiltered view, while search and filters reveal matches. There is no automatic file watcher, undo, cloud sync or packaged standalone binary.
 
 ## Develop and test
 

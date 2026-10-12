@@ -21,7 +21,8 @@ with tempfile.TemporaryDirectory(prefix="todo-pty-") as directory:
     config = folder / "projects.json"
     config.write_text(json.dumps({"version": 1, "projects": [{"name": "smoke-project", "path": str(todo)}]}))
     master, slave = pty.openpty()
-    fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 24, 90, 0, 0))
+    columns = int(os.environ.get("SMOKE_COLUMNS", "90"))
+    fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 24, columns, 0, 0))
     env = dict(os.environ, TERM="xterm-256color", TODOX_CONFIG=str(config))
     child = subprocess.Popen([shutil.which("bun"), str(root / "src/cli.ts"), "--global"], stdin=slave, stdout=slave, stderr=slave, cwd=directory, env=env)
     os.close(slave)
@@ -51,7 +52,7 @@ with tempfile.TemporaryDirectory(prefix="todo-pty-") as directory:
             raise RuntimeError(f"Project never rendered: {output[-4000:]!r}")
         if todo.read_text() != "# TODO\n\n## Smoke\n- [/] Verify terminal\n":
             raise RuntimeError("Read-only smoke test unexpectedly changed task file")
-        print("PASS: real PTY startup, global project rendering, q shutdown, source unchanged")
+        print(f"PASS ({columns} columns): real PTY startup, global project rendering, q shutdown, source unchanged")
     finally:
         if child.poll() is None:
             child.kill()

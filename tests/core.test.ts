@@ -33,15 +33,15 @@ test("Core retained tree renders local tasks, responds to navigation and resize"
   } finally { setup.renderer.destroy(); }
 });
 
-test("terminal defaults and ANSI palette survive rendering and selection", async () => {
+test("terminal canvas and palette keep selection readable", async () => {
   const { global } = fixture();
   const setup = await createTestRenderer({ width: 80, height: 20, kittyKeyboard: true });
   try {
     new CoreApp(setup.renderer, undefined, { model: global }); await setup.renderOnce();
     let frame = setup.captureSpans();
-    expect(frame.lines[0]!.spans[0]!.fg.intent).toBe("default");
-    expect(frame.lines[0]!.spans[0]!.bg.intent).toBe("default");
-    expect(frame.lines[1]!.spans[0]!.fg.intent).toBe("indexed");
+    expect(frame.lines[0]!.spans[0]!.fg.intent).toBe("rgb");
+    expect(frame.lines[0]!.spans[0]!.bg.intent).toBe("rgb");
+    expect(frame.lines[1]!.spans[0]!.fg.a).toBe(1);
     expect(frame.lines[3]!.spans[0]!.attributes & TextAttributes.INVERSE).toBeTruthy();
     global.allTasks(); await setup.renderOnce();
     setup.mockInput.pressArrow("down"); await setup.renderOnce(); frame = setup.captureSpans();
@@ -51,7 +51,27 @@ test("terminal defaults and ANSI palette survive rendering and selection", async
     expect(newSelection.attributes & TextAttributes.INVERSE).toBeTruthy();
     setup.mockInput.pressKey("p"); await setup.renderOnce(); frame = setup.captureSpans();
     const dialog = frame.lines.find(line => line.spans.some(span => span.text.includes("PROJECTS")))!;
-    expect(dialog.spans.some(span => span.bg.intent === "default")).toBe(true);
+    expect(dialog.spans.some(span => span.bg.intent === "rgb")).toBe(true);
+  } finally { setup.renderer.destroy(); }
+});
+
+test("empty workspace paints every blank cell at compact and wide widths", async () => {
+  const { file, model } = fixture();
+  writeFileSync(file, "# TODO\n\n## General\n"); model.reload();
+  const setup = await createTestRenderer({ width: 70, height: 30, kittyKeyboard: true });
+  try {
+    new CoreApp(setup.renderer, undefined, { model });
+    for (const width of [70, 160, 70, 42]) {
+      setup.resize(width, 30); await setup.renderOnce();
+      const frame = setup.captureSpans();
+      for (const line of frame.lines.slice(5, 28)) {
+        for (const span of line.spans) {
+          expect(span.bg.intent).toBe("rgb");
+          expect(span.bg.equals(frame.lines[2]!.spans[0]!.bg)).toBe(true);
+          expect(span.attributes & TextAttributes.INVERSE).toBe(0);
+        }
+      }
+    }
   } finally { setup.renderer.destroy(); }
 });
 

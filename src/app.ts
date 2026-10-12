@@ -4,13 +4,9 @@ import { statusNames } from "./markdown";
 import { filters, TodoModel, type Dialog, type DisplayRow, type TaskRow } from "./model";
 import { clean, fit, pack, windowStart } from "./terminal";
 
-// Keep default foreground/background intent so light and dark terminal themes both work.
-// ANSI palette slots follow the terminal's own configured colors.
-const color = {
-  bg: RGBA.defaultBackground(), ink: RGBA.defaultForeground(),
-  muted: RGBA.defaultForeground(), cyan: RGBA.fromIndex(6), green: RGBA.fromIndex(2),
-  amber: RGBA.fromIndex(3), red: RGBA.fromIndex(1),
-};
+import { terminalTheme } from "./theme";
+
+const color = terminalTheme();
 const HELP = [
   "j/k arrows move · Enter open/fold",
   "Tab switch navigation/list · p projects",
@@ -59,9 +55,9 @@ export class CoreApp {
     this.header.attributes = TextAttributes.INVERSE;
     this.nav = this.text(this.root, "", color.cyan);
     this.subhead = this.text(this.root, "", color.muted, color.bg);
-    const body = new BoxRenderable(renderer, { id: "body", flexGrow: 1, flexDirection: "row", overflow: "hidden" });
+    const body = new BoxRenderable(renderer, { id: "body", flexGrow: 1, flexDirection: "row", overflow: "hidden", backgroundColor: color.bg });
     this.root.add(body);
-    this.list = new BoxRenderable(renderer, { id: "list", flexGrow: 1, flexDirection: "column", overflow: "hidden" });
+    this.list = new BoxRenderable(renderer, { id: "list", flexGrow: 1, flexDirection: "column", overflow: "hidden", backgroundColor: color.bg });
     body.add(this.list);
     this.detail = new BoxRenderable(renderer, { id: "detail", width: 32, flexDirection: "column", backgroundColor: color.bg, border: ["left"], borderColor: color.muted, paddingLeft: 1 });
     body.add(this.detail);
@@ -285,7 +281,13 @@ export async function openInNeovim(renderer: CliRenderer, row: TaskRow) {
   } finally { renderer.resume(); }
 }
 export async function launch(local?: string) {
-  const renderer = await createCliRenderer({ exitOnCtrlC: true, backgroundColor: color.bg, consoleMode: "disabled" });
-  try { new CoreApp(renderer, local); }
-  catch (error) { renderer.destroy(); throw error; }
+  const renderer = await createCliRenderer({ exitOnCtrlC: true, backgroundColor: "transparent", consoleMode: "disabled" });
+  try {
+    // Resolve the terminal's real colors once, rather than leaving blank cells
+    // dependent on default-color/erase state after inverse selection rows.
+    const palette = await renderer.getPalette({ size: 16, timeout: 300 });
+    Object.assign(color, terminalTheme(palette, renderer.themeMode));
+    renderer.setBackgroundColor(color.bg);
+    new CoreApp(renderer, local);
+  } catch (error) { renderer.destroy(); throw error; }
 }
