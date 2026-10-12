@@ -35,8 +35,11 @@ class FakeTickTick(TickTick):
         if path == "/open/v1/tag" and method == "POST":
             self.tags_list.append({"name": payload["name"], "label": payload["label"]})
             return payload
+        if path == "/open/v1/task/completed":
+            return [t for t in self.tasks if t.get("status") == 2]
         if path.endswith("/data"):
-            return {"tasks": list(self.tasks)}
+            # TickTick's project endpoint only reports open tasks.
+            return {"tasks": [t for t in self.tasks if t.get("status") != 2]}
         if path == "/open/v1/task" and method == "POST":
             task = {"id": f"r{len(self.tasks) + 1}", "title": payload["title"], "projectId": payload["projectId"],
                     "status": int(payload.get("status", 0)), "tags": list(payload.get("tags") or []), "completedTime": ""}

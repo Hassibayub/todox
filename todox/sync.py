@@ -239,7 +239,7 @@ class Sync:
             remote_task = remote_by_id.get(entry.ticktick_id)
             if remote_task is None:
                 change.action = "conflict"
-                change.reason = "missing from the TODO.md list in TickTick"
+                change.reason = "not in the TODO.md list any more (deleted or abandoned in TickTick)"
                 plan.changes.append(change)
                 continue
             change.remote = remote_task

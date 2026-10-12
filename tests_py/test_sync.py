@@ -12,6 +12,25 @@ def reload(file: Path):
     return load_projects([Project("web-app", file)])
 
 
+def test_completed_remote_tasks_do_not_look_deleted(workspace, fake):
+    """TickTick hides completed tasks from the project endpoint; sync must still see them."""
+    file, _ = workspace
+    state_path = file.parent / "sync.json"
+    Sync(fake, State(), path=state_path).apply(Sync(fake, State(), path=state_path).plan(reload(file)))
+    assert [t["status"] for t in fake.tasks] == [0, 0, 2]
+    assert [t["id"] for t in fake.project_tasks("list1")] == ["r1", "r2", "r3"]
+    plan = Sync(fake, State.load(state_path), path=state_path).plan(reload(file))
+    assert plan.summary() == {}
+    # completing a task in the file still reaches TickTick, and stays quiet afterwards
+    file.write_text(file.read_text().replace("- [ ] Alpha", "- [x] Alpha"))
+    engine = Sync(fake, State.load(state_path), path=state_path)
+    plan = engine.plan(reload(file))
+    assert plan.summary() == {"update": 1}
+    engine.apply(plan)
+    assert next(t for t in fake.tasks if t["id"] == "r1")["status"] == 2
+    assert Sync(fake, State.load(state_path), path=state_path).plan(reload(file)).summary() == {}
+
+
 def test_push_create_stamps_ids_tags_and_progress(workspace, fake):
     file, _ = workspace
     engine = Sync(fake, State(), path=file.parent / "sync.json")

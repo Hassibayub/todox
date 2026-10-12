@@ -8,6 +8,7 @@ API Token) or an OAuth access token. Tokens live in
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import date, timedelta
 from pathlib import Path
 from typing import Any, Callable
 import json
@@ -116,9 +117,32 @@ class TickTick:
     def create_tag(self, name: str, label: str) -> dict[str, Any]:
         return self._call("POST", "/open/v1/tag", {"name": name, "label": label}) or {}
 
+    def completed_tasks(self, project_id: str) -> list[dict[str, Any]]:
+        """Completed tasks leave the project-data endpoint, so ask for them explicitly."""
+        today = date.today()
+        window = {"projectIds": [project_id], "startDate": "2000-01-01T00:00:00+0000",
+                  "endDate": f"{today + timedelta(days=1)}T00:00:00+0000"}
+        tasks = [t for t in (self._call("POST", "/open/v1/task/completed", window) or []) if isinstance(t, dict) and t.get("id")]
+        if len(tasks) < 200:
+            return tasks
+        # The endpoint caps a single window at 200 tasks; walk it year by year instead.
+        found = {str(t["id"]): t for t in tasks}
+        for year in range(2000, today.year + 2):
+            chunk = self._call("POST", "/open/v1/task/completed", {
+                "projectIds": [project_id], "startDate": f"{year}-01-01T00:00:00+0000",
+                "endDate": f"{year}-12-31T23:59:59+0000"}) or []
+            for task in chunk:
+                if isinstance(task, dict) and task.get("id"):
+                    found[str(task["id"])] = task
+        return list(found.values())
+
     def project_tasks(self, project_id: str) -> list[dict[str, Any]]:
+        """Every task in a list: open ones plus the completed ones kept elsewhere."""
         data = self._call("GET", f"/open/v1/project/{project_id}/data") or {}
-        return list(data.get("tasks") or [])
+        found = {str(t["id"]): t for t in (data.get("tasks") or []) if isinstance(t, dict) and t.get("id")}
+        for task in self.completed_tasks(project_id):
+            found.setdefault(str(task["id"]), task)
+        return list(found.values())
 
     def create_task(self, payload: dict[str, Any]) -> dict[str, Any]:
         return self._call("POST", "/open/v1/task", payload) or {}
