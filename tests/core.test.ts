@@ -1,5 +1,6 @@
 import { afterEach, expect, test } from "bun:test";
 import { createTestRenderer, KeyCodes } from "@opentui/core/testing";
+import { TextAttributes } from "@opentui/core";
 import { mkdtempSync, realpathSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -29,6 +30,28 @@ test("Core retained tree renders local tasks, responds to navigation and resize"
     setup.resize(50, 12); await setup.renderOnce(); frame = setup.captureCharFrame();
     expect(frame).not.toContain("SELECTION"); expect(frame).toContain("Empty");
     expect(setup.captureSpans().cols).toBe(50);
+  } finally { setup.renderer.destroy(); }
+});
+
+test("terminal defaults and ANSI palette survive rendering and selection", async () => {
+  const { global } = fixture();
+  const setup = await createTestRenderer({ width: 80, height: 20, kittyKeyboard: true });
+  try {
+    new CoreApp(setup.renderer, undefined, { model: global }); await setup.renderOnce();
+    let frame = setup.captureSpans();
+    expect(frame.lines[0]!.spans[0]!.fg.intent).toBe("default");
+    expect(frame.lines[0]!.spans[0]!.bg.intent).toBe("default");
+    expect(frame.lines[1]!.spans[0]!.fg.intent).toBe("indexed");
+    expect(frame.lines[3]!.spans[0]!.attributes & TextAttributes.INVERSE).toBeTruthy();
+    global.allTasks(); await setup.renderOnce();
+    setup.mockInput.pressArrow("down"); await setup.renderOnce(); frame = setup.captureSpans();
+    const oldSelection = frame.lines.flatMap(line => line.spans).find(span => span.text.includes("Login"))!;
+    const newSelection = frame.lines.flatMap(line => line.spans).find(span => span.text.includes("Session"))!;
+    expect(oldSelection.attributes & TextAttributes.INVERSE).toBe(0);
+    expect(newSelection.attributes & TextAttributes.INVERSE).toBeTruthy();
+    setup.mockInput.pressKey("p"); await setup.renderOnce(); frame = setup.captureSpans();
+    const dialog = frame.lines.find(line => line.spans.some(span => span.text.includes("PROJECTS")))!;
+    expect(dialog.spans.some(span => span.bg.intent === "default")).toBe(true);
   } finally { setup.renderer.destroy(); }
 });
 

@@ -1,10 +1,16 @@
 import { basename } from "node:path";
-import { BoxRenderable, InputRenderable, InputRenderableEvents, TextRenderable, createCliRenderer, type CliRenderer, type KeyEvent } from "@opentui/core";
+import { BoxRenderable, InputRenderable, InputRenderableEvents, RGBA, TextAttributes, TextRenderable, createCliRenderer, type CliRenderer, type KeyEvent } from "@opentui/core";
 import { statusNames } from "./markdown";
 import { filters, TodoModel, type Dialog, type DisplayRow, type TaskRow } from "./model";
 import { clean, fit, pack, windowStart } from "./terminal";
 
-const color = { bg: "#111b22", rail: "#1a2931", surface: "#21343d", ink: "#e6ede9", muted: "#aac0bd", selected: "#365257", cyan: "#96d4ce", green: "#a9dcae", amber: "#e4c997", red: "#ffaaaa" };
+// Keep default foreground/background intent so light and dark terminal themes both work.
+// ANSI palette slots follow the terminal's own configured colors.
+const color = {
+  bg: RGBA.defaultBackground(), ink: RGBA.defaultForeground(),
+  muted: RGBA.defaultForeground(), cyan: RGBA.fromIndex(6), green: RGBA.fromIndex(2),
+  amber: RGBA.fromIndex(3), red: RGBA.fromIndex(1),
+};
 const HELP = [
   "j/k arrows move · Enter open/fold",
   "Tab switch navigation/list · p projects",
@@ -49,17 +55,19 @@ export class CoreApp {
     this.model = options.model ?? new TodoModel(local);
     this.onEditor = options.onEditor ?? (row => openInNeovim(renderer, row));
     this.root = new BoxRenderable(renderer, { id: "core-workspace", width: "100%", height: "100%", flexDirection: "column", backgroundColor: color.bg });
-    this.header = this.text(this.root, "", color.ink, color.rail);
-    this.nav = this.text(this.root, "", color.cyan, color.rail);
+    this.header = this.text(this.root);
+    this.header.attributes = TextAttributes.INVERSE;
+    this.nav = this.text(this.root, "", color.cyan);
     this.subhead = this.text(this.root, "", color.muted, color.bg);
     const body = new BoxRenderable(renderer, { id: "body", flexGrow: 1, flexDirection: "row", overflow: "hidden" });
     this.root.add(body);
     this.list = new BoxRenderable(renderer, { id: "list", flexGrow: 1, flexDirection: "column", overflow: "hidden" });
     body.add(this.list);
-    this.detail = new BoxRenderable(renderer, { id: "detail", width: 32, flexDirection: "column", backgroundColor: color.rail, border: ["left"], borderColor: color.surface, paddingLeft: 1 });
+    this.detail = new BoxRenderable(renderer, { id: "detail", width: 32, flexDirection: "column", backgroundColor: color.bg, border: ["left"], borderColor: color.muted, paddingLeft: 1 });
     body.add(this.detail);
     for (let i = 0; i < 12; i++) this.detailLines.push(this.text(this.detail));
-    this.footer = this.text(this.root, "", color.muted, color.surface);
+    this.footer = this.text(this.root);
+    this.footer.attributes = TextAttributes.INVERSE;
     renderer.root.add(this.root);
     this.unsubscribe = this.model.subscribe(() => this.paint());
     this.onKey = key => { if (this.key(key)) key.preventDefault(); };
@@ -116,7 +124,7 @@ export class CoreApp {
     if (model.view === "projects") this.paintProjects(); else this.paintTasks();
     const info = model.error ? `ERROR: ${model.message}` : model.message || (model.focus === "sidebar" ? "Tab tasks · j/k scope · Enter open" : "j/k move · Enter open/fold · a task · S section · f filter · ? help");
     this.footer.content = pack(` ${info}`, model.selected ? `${basename(model.selected.doc.path)}:${model.selected.task.line} ` : "q quit ", this.cols);
-    this.footer.fg = model.error ? color.red : color.muted;
+    this.footer.fg = model.error ? color.red : color.ink;
     this.paintDialog();
   }
   private paintProjects() {
@@ -124,14 +132,14 @@ export class CoreApp {
     const active = this.model.activeQueue;
     const projectHeight = Math.max(1, Math.min(projects.length, Math.floor(this.listRows * 0.55)));
     const start = windowStart(this.model.index, projects.length, projectHeight);
-    const lines: { content: string; fg?: string; bg?: string }[] = [];
+    const lines: { content: string; fg?: RGBA; selected?: boolean }[] = [];
     for (let i = start; i < Math.min(projects.length, start + projectHeight); i++) {
       const p = projects[i]!;
       const c = p.doc ? { " ": p.doc.tasks.filter(t => t.status === " ").length, "/": p.doc.tasks.filter(t => t.status === "/").length, x: p.doc.tasks.filter(t => t.status === "x").length } : null;
-      lines.push({ content: pack(`${i === this.model.index ? ">" : " "} ${p.name}`, c ? `${c[" "]}      ${c["/"]}      ${c.x}  ` : "unavailable ", this.listCols), fg: p.error ? color.red : color.ink, bg: i === this.model.index ? color.selected : color.bg });
+      lines.push({ content: pack(`${i === this.model.index ? ">" : " "} ${p.name}`, c ? `${c[" "]}      ${c["/"]}      ${c.x}  ` : "unavailable ", this.listCols), fg: p.error ? color.red : color.ink, selected: i === this.model.index });
     }
     if (!projects.length) lines.push({ content: this.model.projects.length ? " No matching projects · Esc clears search" : " No projects · todo add-project /path/to/project", fg: color.amber });
-    lines.push({ content: "─".repeat(this.listCols), fg: color.surface });
+    lines.push({ content: "─".repeat(this.listCols), fg: color.muted });
     lines.push({ content: pack(` IN PROGRESS  ${active.length}`, "w open ", this.listCols), fg: color.cyan });
     for (const row of active.slice(0, Math.max(0, this.listRows - lines.length))) lines.push({ content: fit(` [/] ${row.project.name}  /  ${row.task.text}`, this.listCols), fg: color.ink });
     if (!active.length) lines.push({ content: " Nothing active right now", fg: color.muted });
@@ -140,7 +148,7 @@ export class CoreApp {
   private paintTasks() {
     const nodes = this.model.displayRows;
     const start = windowStart(this.model.index, nodes.length, this.listRows);
-    const lines: { content: string; fg?: string; bg?: string }[] = [];
+    const lines: { content: string; fg?: RGBA; selected?: boolean }[] = [];
     for (let i = start; i < Math.min(nodes.length, start + this.listRows); i++) {
       const node = nodes[i]!;
       const mark = i === this.model.index ? ">" : " ";
@@ -151,16 +159,17 @@ export class CoreApp {
         fg = task.status === "/" ? color.cyan : task.status === "x" ? color.muted : color.ink;
       } else if (node.kind === "section") { text = pack(`${mark} ${node.collapsed ? "▸" : "▾"} ${node.title}`, `${node.count} `, this.listCols); fg = color.amber; }
       else { text = pack(`${mark}   ${node.collapsed ? "▸" : "▾"} Completed`, `${node.count} `, this.listCols); fg = color.green; }
-      lines.push({ content: fit(text, this.listCols), fg, bg: i === this.model.index ? color.selected : color.bg });
+      lines.push({ content: fit(text, this.listCols), fg, selected: i === this.model.index });
     }
     if (!nodes.length) lines.push({ content: fit(this.model.scope[0]?.error ? ` Cannot read TODO.md: ${this.model.scope[0]!.error}` : this.model.query || this.model.filter !== "all" ? " No matches · Esc clears filters" : " No tasks · S makes a section, a adds a task", this.listCols), fg: color.amber });
     this.renderLines(lines);
   }
-  private renderLines(lines: { content: string; fg?: string; bg?: string }[]) {
+  private renderLines(lines: { content: string; fg?: RGBA; selected?: boolean }[]) {
     this.ensureRows(Math.min(lines.length, this.listRows));
     for (let i = 0; i < Math.min(lines.length, this.listRows); i++) {
       const node = this.rowPool[i]!, line = lines[i]!;
-      node.content = line.content; node.fg = line.fg ?? color.ink; node.bg = line.bg ?? color.bg;
+      node.content = line.content; node.fg = line.fg ?? color.ink;
+      node.attributes = line.selected ? TextAttributes.INVERSE : 0;
     }
   }
   private hideDialog() {
@@ -173,11 +182,11 @@ export class CoreApp {
     const width = Math.min(68, this.cols - 4);
     if (!this.overlay || d !== this.dialogRef) {
       this.hideDialog(); this.dialogRef = d;
-      this.overlay = new BoxRenderable(this.renderer, { id: "dialog", position: "absolute", top: 3, left: Math.floor((this.cols - width) / 2), width, flexDirection: "column", border: true, borderColor: color.cyan, backgroundColor: color.rail, paddingX: 1 });
+      this.overlay = new BoxRenderable(this.renderer, { id: "dialog", position: "absolute", top: 3, left: Math.floor((this.cols - width) / 2), width, flexDirection: "column", border: true, borderColor: color.cyan, backgroundColor: color.bg, paddingX: 1 });
       this.root.add(this.overlay);
-      for (let i = 0; i < 8; i++) this.modalRows.push(this.text(this.overlay, "", color.ink, color.rail));
+      for (let i = 0; i < 8; i++) this.modalRows.push(this.text(this.overlay));
       if ("value" in d) {
-        this.input = new InputRenderable(this.renderer, { id: "dialog-input", width: width - 4, value: d.value, backgroundColor: color.surface, focusedBackgroundColor: color.surface, textColor: color.ink, cursorColor: color.cyan });
+        this.input = new InputRenderable(this.renderer, { id: "dialog-input", width: width - 4, value: d.value, backgroundColor: color.bg, focusedBackgroundColor: color.bg, textColor: color.ink, cursorColor: color.ink });
         this.overlay.add(this.input);
         this.input.on(InputRenderableEvents.INPUT, (value: string) => this.model.input(value));
         this.input.on(InputRenderableEvents.ENTER, (value: string) => this.model.submit(value));

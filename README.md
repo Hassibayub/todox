@@ -6,7 +6,7 @@ The command is **`todo`**.
 
 ![todo showing an example project's tasks and selection inspector](assets/screenshot.png)
 
-*Screenshot generated from the included sample project using OpenTUI's native test renderer.*
+*Screenshot generated from the included sample project using OpenTUI's native test renderer and a dark terminal palette. Your terminal colors may differ.*
 
 ## Install
 
@@ -60,7 +60,7 @@ Tasks use `[ ]` for not started, `[/]` for in progress and `[x]` for completed. 
 
 Section removal is **empty-only**: tasks, notes, comments, code blocks and nested headings block it. The document title and implicit General group are protected. Writes use cooperative locks, atomic replacement and stale-file checks to avoid overwriting external changes.
 
-The layout fits compact terminals; at 104+ columns, an inspector shows the current selection. Completed tasks fold in the unfiltered view, while search and filters reveal matches. There is no automatic file watcher, undo, cloud sync or packaged standalone binary.
+The UI uses your terminal's default foreground/background and ANSI palette, so it follows light or dark terminal themes without an app setting. The layout fits compact terminals; at 104+ columns, an inspector shows the current selection. Completed tasks fold in the unfiltered view, while search and filters reveal matches. There is no automatic file watcher, undo, cloud sync or packaged standalone binary.
 
 ## Develop and test
 
