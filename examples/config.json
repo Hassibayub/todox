@@ -1,0 +1,7 @@
+{
+  "version": 1,
+  "projects": [
+    { "name": "web-app", "path": "web-app/TODO.md" },
+    { "name": "api-service", "path": "api-service/TODO.md" }
+  ]
+}
