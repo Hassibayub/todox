@@ -1,23 +1,22 @@
-import { createTestRenderer } from "@opentui/core/testing";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { CoreApp } from "../src/app";
+import { AnsiApp } from "../src/app";
 import { TodoModel } from "../src/model";
 
 const model = new TodoModel(undefined, resolve(import.meta.dir, "../examples/config.json"));
 const dir = resolve(import.meta.dir, "../.pi/review"); mkdirSync(dir, { recursive: true });
-const setup = await createTestRenderer({ width: 110, height: 28, kittyKeyboard: true });
-new CoreApp(setup.renderer, undefined, { model, onEditor: async () => {} });
-async function capture(name: string) {
-  await setup.renderOnce();
-  writeFileSync(`${dir}/${name}.txt`, setup.captureCharFrame());
+const app = new AnsiApp(model);
+function capture(name: string, width: number, height: number) {
+  const frame = app.frame(width, height);
+  writeFileSync(`${dir}/${name}.txt`, frame.map(row => row.text).join("\n"));
+  writeFileSync(`${dir}/${name}.json`, JSON.stringify(frame));
 }
 try {
-  await capture("overview-wide");
-  model.openProject(); await capture("project-wide");
-  setup.resize(60, 16); await capture("project-compact");
-  model.begin("section-add"); await capture("new-section-compact");
-  model.cancel(); model.begin("filter"); await capture("filter-compact");
-  model.cancel(); model.inProgress(); await capture("active-compact");
-} finally { setup.renderer.destroy(); }
+  capture("overview-wide", 110, 24);
+  model.move(1); model.openProject(); capture("project-wide", 110, 20);
+  capture("project-compact", 42, 12);
+  model.begin("section-add"); capture("new-section-compact", 42, 12);
+  model.cancel(); model.begin("filter"); capture("filter-compact", 42, 12);
+  model.cancel(); model.inProgress(); capture("active-compact", 42, 12);
+} finally { app.dispose(); }
 console.log(`Read-only frames: ${dir}`);

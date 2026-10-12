@@ -1,12 +1,12 @@
 # todox
 
-A keyboard-driven, Markdown-native todo app for the terminal. Tasks stay in `TODO.md`; there is no database or cloud account. Built directly with [OpenTUI Core](https://github.com/anomalyco/opentui) and [Bun](https://bun.sh/).
+A keyboard-driven, Markdown-native todo app for the terminal. Tasks stay in `TODO.md`; there is no database or cloud account. Plain ANSI output and raw keyboard input, built with [Bun](https://bun.sh/). **No UI framework or runtime dependencies.**
 
 The command is **`todo`**.
 
 ![todo showing an example project's tasks and selection inspector](assets/screenshot.png)
 
-*Screenshot generated from the included sample project using OpenTUI's native test renderer and a dark terminal palette. Your terminal colors may differ.*
+*Screenshot generated from the included sample project's actual ANSI UI frame. Your terminal colors may differ.*
 
 ## Install
 
@@ -60,7 +60,7 @@ Tasks use `[ ]` for not started, `[/]` for in progress and `[x]` for completed. 
 
 Section removal is **empty-only**: tasks, notes, comments, code blocks and nested headings block it. The document title and implicit General group are protected. Writes use cooperative locks, atomic replacement and stale-file checks to avoid overwriting external changes.
 
-At startup the UI queries your terminal's foreground, background and ANSI palette, then explicitly paints the canvas so split panes and full-screen views stay consistent. Restart `todo` after changing your terminal theme. If color replies are unavailable, it uses a neutral dark fallback (or a light fallback when the terminal reports light mode). The layout fits compact terminals; at 104+ columns, an inspector shows the current selection. Completed tasks fold in the unfiltered view, while search and filters reveal matches. There is no automatic file watcher, undo, cloud sync or packaged standalone binary.
+The UI leaves your terminal background untouched and uses its default text and ANSI accent colors. Selection uses `>` and bold text, never an inverted background. Compact and full-screen terminals use the same single-pane layout. Input appears inline, with `|` marking the insertion point. Completed tasks fold in the unfiltered view; search and filters reveal matches. There is no automatic file watcher, undo, cloud sync or packaged standalone binary.
 
 ## Develop and test
 

@@ -3,7 +3,7 @@
   "version": "0.2.0",
   "private": true,
   "license": "MIT",
-  "description": "Markdown-native todo TUI built with OpenTUI Core",
+  "description": "Markdown-native todo app for the terminal, with no UI framework",
   "type": "module",
   "bin": { "todo": "./src/cli.ts" },
   "scripts": {
@@ -12,6 +12,5 @@
     "test": "bun test",
     "typecheck": "tsc --noEmit"
   },
-  "dependencies": { "@opentui/core": "0.1.107" },
   "devDependencies": { "@types/bun": "^1.3.14", "typescript": "^5.9.3" }
 }

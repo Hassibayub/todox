@@ -4,7 +4,7 @@ import { join, resolve } from "node:path";
 import { configPath, findLocalTodo, loadConfig, loadProjects, registerProject, resolveTodo, unregisterProject } from "./projects";
 import { counts } from "./markdown";
 
-const help = `todo — OpenTUI Core edition
+const help = `todo — Markdown tasks in your terminal
 
   todo                        Local TODO.md, or global overview
   todo --global               All registered projects

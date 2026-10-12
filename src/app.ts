@@ -1,293 +1,221 @@
 import { basename } from "node:path";
-import { BoxRenderable, InputRenderable, InputRenderableEvents, RGBA, TextAttributes, TextRenderable, createCliRenderer, type CliRenderer, type KeyEvent } from "@opentui/core";
-import { statusNames } from "./markdown";
-import { filters, TodoModel, type Dialog, type DisplayRow, type TaskRow } from "./model";
+import { StringDecoder } from "node:string_decoder";
 import { clean, fit, pack, windowStart } from "./terminal";
+import { filters, TodoModel, type Dialog, type TaskRow } from "./model";
+import { statusNames } from "./markdown";
+import { KeyDecoder, type Key } from "./keys";
 
-import { terminalTheme } from "./theme";
+const ESC = "\x1b[";
+const RESET = `${ESC}0m`;
+const HELP = ["j/k arrows move · Enter open/fold", "Tab focus · p projects", "g overview · w active · t all", "Space status · 1/2/3 set status", "a/e/d add/edit/delete task", "S/D create/remove empty section", "f filter · / search · Esc reset", "za fold · zM/zR collapse/expand", "o open in Neovim", "r reload · q quit · ? help"];
+export interface Line { text: string; style?: number }
+const line = (text: string, style?: number): Line => ({ text, style });
+const graphemes = (text: string) => [...new Intl.Segmenter(undefined, { granularity: "grapheme" }).segment(text)].map(x => x.segment);
 
-const color = terminalTheme();
-const HELP = [
-  "j/k arrows move · Enter open/fold",
-  "Tab switch navigation/list · p projects",
-  "g overview · w active · t all",
-  "Space cycle task · 1/2/3 set status",
-  "a add · e edit · d delete task",
-  "S create section · D remove empty",
-  "f filter · / search · Esc reset",
-  "z a fold · z M/R collapse/expand",
-  "o open file at line in Neovim",
-  "r reload · q quit · ? help",
-];
+/** ANSI only: no background overrides, palette queries or inverse-fill state. */
+export function encodeFrame(lines: Line[], columns: number): string {
+  const width = Math.max(1, columns - 1); // Avoid autowrap at the physical right edge.
+  return lines.map((row, index) => `${ESC}${index + 1};1H${RESET}${ESC}2K${row.style ? `${ESC}${row.style}m` : ""}${fit(row.text, width)}${RESET}`).join("");
+}
 
-/** Imperative, retained renderable tree: row slots survive model updates. */
-export class CoreApp {
-  readonly model: TodoModel;
-  private root: BoxRenderable;
-  private header: TextRenderable;
-  private nav: TextRenderable;
-  private subhead: TextRenderable;
-  private list: BoxRenderable;
-  private rowPool: TextRenderable[] = [];
-  private detail: BoxRenderable;
-  private detailLines: TextRenderable[] = [];
-  private footer: TextRenderable;
-  private overlay?: BoxRenderable;
-  private dialogRef?: Dialog;
-  private input?: InputRenderable;
-  private modalRows: TextRenderable[] = [];
+export class AnsiApp {
   private unsubscribe: () => void;
-  private onKey: (key: KeyEvent) => void;
-  private onResize: () => void;
-  private wide = false;
-  private cols = 80;
-  private rows = 24;
-  private listCols = 80;
-  private listRows = 15;
-  private destroyed = false;
-  private onEditor: (row: TaskRow) => Promise<void>;
-
-  constructor(readonly renderer: CliRenderer, local?: string, options: { model?: TodoModel; onEditor?: (row: TaskRow) => Promise<void> } = {}) {
-    this.model = options.model ?? new TodoModel(local);
-    this.onEditor = options.onEditor ?? (row => openInNeovim(renderer, row));
-    this.root = new BoxRenderable(renderer, { id: "core-workspace", width: "100%", height: "100%", flexDirection: "column", backgroundColor: color.bg });
-    this.header = this.text(this.root);
-    this.header.attributes = TextAttributes.INVERSE;
-    this.nav = this.text(this.root, "", color.cyan);
-    this.subhead = this.text(this.root, "", color.muted, color.bg);
-    const body = new BoxRenderable(renderer, { id: "body", flexGrow: 1, flexDirection: "row", overflow: "hidden", backgroundColor: color.bg });
-    this.root.add(body);
-    this.list = new BoxRenderable(renderer, { id: "list", flexGrow: 1, flexDirection: "column", overflow: "hidden", backgroundColor: color.bg });
-    body.add(this.list);
-    this.detail = new BoxRenderable(renderer, { id: "detail", width: 32, flexDirection: "column", backgroundColor: color.bg, border: ["left"], borderColor: color.muted, paddingLeft: 1 });
-    body.add(this.detail);
-    for (let i = 0; i < 12; i++) this.detailLines.push(this.text(this.detail));
-    this.footer = this.text(this.root);
-    this.footer.attributes = TextAttributes.INVERSE;
-    renderer.root.add(this.root);
-    this.unsubscribe = this.model.subscribe(() => this.paint());
-    this.onKey = key => { if (this.key(key)) key.preventDefault(); };
-    this.onResize = () => this.paint();
-    renderer.keyInput.on("keypress", this.onKey);
-    renderer.on("resize", this.onResize);
-    renderer.once("destroy", () => this.dispose());
-    this.model.notice("Ready · ? help · q quit");
-    this.paint();
+  private dialogRef?: Dialog;
+  private cursor = 0;
+  private replaceSelection = false;
+  constructor(readonly model: TodoModel, private changed: () => void = () => {}, private quit: () => void = () => {}, private editor: (row: TaskRow) => Promise<void> = async () => {}) {
+    this.unsubscribe = model.subscribe(changed);
+    model.notice("Ready · ? help · q quit");
   }
-
-  private text(parent: BoxRenderable, content = "", fg = color.ink, bg = color.bg): TextRenderable {
-    const item = new TextRenderable(this.renderer, { content, height: 1, wrapMode: "none", fg, bg, selectable: false });
-    parent.add(item); return item;
-  }
-  private ensureRows(count: number) {
-    while (this.rowPool.length < count) this.rowPool.push(this.text(this.list));
-    for (let i = 0; i < this.rowPool.length; i++) this.rowPool[i]!.visible = i < count;
-  }
-  private detailText(lines: string[]) {
-    for (let i = 0; i < this.detailLines.length; i++) {
-      const node = this.detailLines[i]!;
-      node.content = fit(lines[i] || "", 29);
-      node.fg = i === 0 ? color.cyan : color.muted;
-    }
-  }
-  paint() {
-    if (this.destroyed) return;
-    const model = this.model;
-    this.cols = this.renderer.width;
-    this.rows = this.renderer.height;
-    if (this.cols < 42 || this.rows < 10) {
-      this.header.content = "todo — resize terminal (42×10) · q quit";
-      this.nav.content = ""; this.subhead.content = ""; this.footer.content = "";
-      this.list.visible = false; this.detail.visible = false; this.hideDialog(); return;
-    }
-    this.list.visible = true;
-    this.wide = this.cols >= 104 && model.view === "tasks";
-    this.detail.visible = this.wide;
-    this.listCols = this.cols - (this.wide ? 32 : 0);
-    this.listRows = Math.max(1, this.rows - 4);
-    const c = model.totals;
-    this.header.content = pack(` todo  /  ${model.title}`, `[ ] ${c[" "]}   [/] ${c["/"]}   [x] ${c.x} `, this.cols);
-    const project = model.local ? model.scope[0]?.name : undefined;
-    const nav = `[g] Overview    [w] In progress    [t] All tasks${project ? `    / ${project}` : ""}`;
-    this.nav.content = fit(`${model.focus === "sidebar" ? ">" : " "}${nav}`, this.cols);
-    this.nav.fg = model.focus === "sidebar" ? color.amber : color.cyan;
-    const selected = model.selected;
-    const active = model.selectedNode;
-    const status = `TASKS  ${model.filter === "all" ? "ALL" : `[${model.filter}] ${statusNames[model.filter].toUpperCase()}`}  ${model.query ? `/ ${model.query}` : ""}`;
-    this.subhead.content = model.view === "projects" ? pack(" PROJECT", "PEND   ACTIVE   DONE  ", this.listCols) : fit(` ${status}`, this.listCols);
-    this.detailText(model.view === "projects" ? ["WORKSPACE", "", `${model.projects.length} projects`, `${model.globalTotals["/"]} active tasks`, "", "Enter opens a project", "w shows active work", "p picks a project"] : ["SELECTION", "", selected ? `[${selected.task.status}] ${selected.task.text}` : active?.kind === "section" ? active.title : "Select a task", "", selected?.project.name || model.title, selected ? `${basename(selected.doc.path)}:${selected.task.line}` : "", "", "Space status", "a add task  S section", "D remove empty section", "o open in Neovim"]);
-
-    if (model.view === "projects") this.paintProjects(); else this.paintTasks();
-    const info = model.error ? `ERROR: ${model.message}` : model.message || (model.focus === "sidebar" ? "Tab tasks · j/k scope · Enter open" : "j/k move · Enter open/fold · a task · S section · f filter · ? help");
-    this.footer.content = pack(` ${info}`, model.selected ? `${basename(model.selected.doc.path)}:${model.selected.task.line} ` : "q quit ", this.cols);
-    this.footer.fg = model.error ? color.red : color.ink;
-    this.paintDialog();
-  }
-  private paintProjects() {
-    const projects = this.model.projectRows;
-    const active = this.model.activeQueue;
-    const projectHeight = Math.max(1, Math.min(projects.length, Math.floor(this.listRows * 0.55)));
-    const start = windowStart(this.model.index, projects.length, projectHeight);
-    const lines: { content: string; fg?: RGBA; selected?: boolean }[] = [];
-    for (let i = start; i < Math.min(projects.length, start + projectHeight); i++) {
-      const p = projects[i]!;
-      const c = p.doc ? { " ": p.doc.tasks.filter(t => t.status === " ").length, "/": p.doc.tasks.filter(t => t.status === "/").length, x: p.doc.tasks.filter(t => t.status === "x").length } : null;
-      lines.push({ content: pack(`${i === this.model.index ? ">" : " "} ${p.name}`, c ? `${c[" "]}      ${c["/"]}      ${c.x}  ` : "unavailable ", this.listCols), fg: p.error ? color.red : color.ink, selected: i === this.model.index });
-    }
-    if (!projects.length) lines.push({ content: this.model.projects.length ? " No matching projects · Esc clears search" : " No projects · todo add-project /path/to/project", fg: color.amber });
-    lines.push({ content: "─".repeat(this.listCols), fg: color.muted });
-    lines.push({ content: pack(` IN PROGRESS  ${active.length}`, "w open ", this.listCols), fg: color.cyan });
-    for (const row of active.slice(0, Math.max(0, this.listRows - lines.length))) lines.push({ content: fit(` [/] ${row.project.name}  /  ${row.task.text}`, this.listCols), fg: color.ink });
-    if (!active.length) lines.push({ content: " Nothing active right now", fg: color.muted });
-    this.renderLines(lines);
-  }
-  private paintTasks() {
-    const nodes = this.model.displayRows;
-    const start = windowStart(this.model.index, nodes.length, this.listRows);
-    const lines: { content: string; fg?: RGBA; selected?: boolean }[] = [];
-    for (let i = start; i < Math.min(nodes.length, start + this.listRows); i++) {
-      const node = nodes[i]!;
-      const mark = i === this.model.index ? ">" : " ";
-      let text: string; let fg = color.ink;
-      if (node.kind === "task") {
-        const task = node.row.task;
-        text = `${mark}   ${task.indent.replace(/\t/g, "  ").slice(0, 6)}[${task.status}] ${task.text}`;
-        fg = task.status === "/" ? color.cyan : task.status === "x" ? color.muted : color.ink;
-      } else if (node.kind === "section") { text = pack(`${mark} ${node.collapsed ? "▸" : "▾"} ${node.title}`, `${node.count} `, this.listCols); fg = color.amber; }
-      else { text = pack(`${mark}   ${node.collapsed ? "▸" : "▾"} Completed`, `${node.count} `, this.listCols); fg = color.green; }
-      lines.push({ content: fit(text, this.listCols), fg, selected: i === this.model.index });
-    }
-    if (!nodes.length) lines.push({ content: fit(this.model.scope[0]?.error ? ` Cannot read TODO.md: ${this.model.scope[0]!.error}` : this.model.query || this.model.filter !== "all" ? " No matches · Esc clears filters" : " No tasks · S makes a section, a adds a task", this.listCols), fg: color.amber });
-    this.renderLines(lines);
-  }
-  private renderLines(lines: { content: string; fg?: RGBA; selected?: boolean }[]) {
-    this.ensureRows(Math.min(lines.length, this.listRows));
-    for (let i = 0; i < Math.min(lines.length, this.listRows); i++) {
-      const node = this.rowPool[i]!, line = lines[i]!;
-      node.content = line.content; node.fg = line.fg ?? color.ink;
-      node.attributes = line.selected ? TextAttributes.INVERSE : 0;
-    }
-  }
-  private hideDialog() {
-    if (this.overlay) { this.overlay.destroyRecursively(); this.overlay = undefined; this.input = undefined; this.modalRows = []; }
-    this.dialogRef = undefined;
-  }
-  private paintDialog() {
+  dispose() { this.unsubscribe(); }
+  private syncInput() {
     const d = this.model.dialog;
-    if (!d) { this.hideDialog(); return; }
-    const width = Math.min(68, this.cols - 4);
-    if (!this.overlay || d !== this.dialogRef) {
-      this.hideDialog(); this.dialogRef = d;
-      this.overlay = new BoxRenderable(this.renderer, { id: "dialog", position: "absolute", top: 3, left: Math.floor((this.cols - width) / 2), width, flexDirection: "column", border: true, borderColor: color.cyan, backgroundColor: color.bg, paddingX: 1 });
-      this.root.add(this.overlay);
-      for (let i = 0; i < 8; i++) this.modalRows.push(this.text(this.overlay));
-      if ("value" in d) {
-        this.input = new InputRenderable(this.renderer, { id: "dialog-input", width: width - 4, value: d.value, backgroundColor: color.bg, focusedBackgroundColor: color.bg, textColor: color.ink, cursorColor: color.ink });
-        this.overlay.add(this.input);
-        this.input.on(InputRenderableEvents.INPUT, (value: string) => this.model.input(value));
-        this.input.on(InputRenderableEvents.ENTER, (value: string) => this.model.submit(value));
-        this.input.focus();
-      }
-    }
-    this.overlay.width = width;
-    this.overlay.left = Math.floor((this.cols - width) / 2);
-    this.overlay.top = this.rows < 14 ? 1 : 3;
-    const title = ({ help: "KEYS", filter: "FILTER", projects: "PROJECTS", search: "SEARCH", add: "ADD TASK", edit: "EDIT TASK", delete: "DELETE TASK?", "section-add": "NEW SECTION", "section-remove": "REMOVE EMPTY SECTION?" } as const)[d.kind];
-    const lineItems: string[] = [title];
-    if (d.kind === "help") lineItems.push(...HELP.slice(Math.max(0, d.index - 2), Math.max(0, d.index - 2) + Math.max(1, Math.min(5, this.rows - 8))));
-    else if (d.kind === "filter") lineItems.push(...filters.map((f, i) => `${i === d.index ? ">" : " "} ${f === "all" ? "All" : `[${f}] ${statusNames[f]}`}`));
-    else if (d.kind === "projects") lineItems.push(...this.model.navigation.slice(windowStart(d.index, this.model.navigation.length, 5), windowStart(d.index, this.model.navigation.length, 5) + 5).map(item => `${this.model.navigation[d.index] === item ? ">" : " "} ${item.label}${item.error ? " (unavailable)" : ""}`));
-    else if (d.kind === "delete") lineItems.push(fit(d.row.task.text, width - 4), "y delete line · n/Esc cancel");
-    else if (d.kind === "section-remove") lineItems.push(fit(d.title, width - 4), "Empty heading only · y remove · n/Esc cancel");
-    else if (d.kind === "section-add") lineItems.push("Appends ## heading to current file", `File: ${basename(d.doc.path)}`);
-    else if (d.kind === "add") lineItems.push(`Section: ${d.doc.sections.find(s => s.id === d.sectionId)?.title || "General"} · Tab changes`);
-    if (this.model.error) lineItems.push(`ERROR: ${this.model.message}`);
-    if (this.input) lineItems.push("Enter save · Esc cancel");
-    else if (d.kind === "help") lineItems.push("j/k scroll · Esc close");
-    else if (d.kind === "filter" || d.kind === "projects") lineItems.push("j/k choose · Enter apply · Esc cancel");
-    for (let i = 0; i < this.modalRows.length; i++) {
-      const row = this.modalRows[i]!;
-      // Input remains last in tree; hint lines preceding it are intentional.
-      row.visible = i < Math.min(lineItems.length, Math.max(1, this.rows - 6));
-      row.content = fit(` ${lineItems[i] || ""}`, width - 3);
-      row.fg = lineItems[i]?.startsWith("ERROR:") ? color.red : i === 0 ? color.cyan : color.ink;
+    if (d !== this.dialogRef) {
+      this.dialogRef = d; this.cursor = d && "value" in d ? graphemes(d.value).length : 0; this.replaceSelection = false;
     }
   }
-  private key(key: KeyEvent): boolean {
-    const m = this.model, c = key.sequence;
-    if (key.ctrl && key.name === "c") { this.renderer.destroy(); return true; }
-    if (m.busy) return true;
+  frame(columns: number, rows: number): Line[] {
+    const w = Math.max(1, columns - 1), h = Math.max(1, rows);
+    const output = Array.from({ length: h }, () => line(""));
+    const m = this.model;
+    if (w < 20 || h < 6) { output[0] = line("Resize terminal · q quit"); return output; }
+    const c = m.totals;
+    output[0] = line(pack(` todo / ${m.title}`, `[ ] ${c[" "]} [/] ${c["/"]} [x] ${c.x}`, w), 1);
+    output[1] = line(`${m.focus === "sidebar" ? ">" : " "}g overview · w active · t all · p projects`, 36);
+    const capacity = h - 4;
+    let body: Line[] = [];
+    if (m.view === "projects") {
+      output[2] = line(pack(" PROJECT", "PEND ACTIVE DONE", w), 1);
+      const start = windowStart(m.index, m.projectRows.length, Math.max(1, Math.floor(capacity / 2)));
+      body = m.projectRows.slice(start, start + Math.max(1, Math.floor(capacity / 2))).map((p, i) => {
+        const tasks = p.doc?.tasks || [];
+        return line(pack(`${i + start === m.index ? ">" : " "} ${p.name}`, p.error ? "unavailable" : `${tasks.filter(t => t.status === " ").length}    ${tasks.filter(t => t.status === "/").length}    ${tasks.filter(t => t.status === "x").length}`, w), p.error ? 31 : i + start === m.index ? 1 : undefined);
+      });
+      if (!body.length) body.push(line("No projects · todo add-project /path", 33));
+      body.push(line(`IN PROGRESS · ${m.activeQueue.length}`, 1));
+      body.push(...m.activeQueue.map(row => line(`[/] ${row.project.name} / ${row.task.text}`, 36)));
+    } else {
+      output[2] = line(` TASKS · ${m.filter === "all" ? "ALL" : statusNames[m.filter]}${m.query ? ` / ${m.query}` : ""}`, 1);
+      const nodes = m.displayRows;
+      const start = windowStart(m.index, nodes.length, capacity);
+      body = nodes.slice(start, start + capacity).map((node, i) => {
+        const mark = i + start === m.index ? ">" : " ";
+        if (node.kind === "section") return line(pack(`${mark} ${node.collapsed ? "▸" : "▾"} ${node.title}`, `${node.count}`, w), 33);
+        if (node.kind === "completed") return line(`${mark}   ${node.collapsed ? "▸" : "▾"} Completed (${node.count})`, 32);
+        return line(`${mark}   [${node.row.task.status}] ${node.row.task.text}`, i + start === m.index ? 1 : node.row.task.status === "/" ? 36 : undefined);
+      });
+      if (!body.length) body.push(line(m.scope[0]?.error ? "Cannot read TODO.md · r refresh" : "No tasks · a add · S section", 33));
+    }
+    for (let i = 0; i < Math.min(body.length, capacity); i++) output[3 + i] = body[i]!;
+    output[h - 1] = line(m.error ? `ERROR: ${m.message}` : m.message || "j/k move · a add · ? help · q quit", m.error ? 31 : undefined);
     const d = m.dialog;
     if (d) {
-      if (key.name === "escape") { m.cancel(); return true; }
-      if ("value" in d) { if (key.name === "tab" && d.kind === "add") { m.cycleSection(); return true; } return false; }
-      if (d.kind === "delete" || d.kind === "section-remove") { if (c === "y") m.submit(); else if (c === "n") m.cancel(); return true; }
-      if (c === "j" || key.name === "down") { if (d.kind === "help") { d.index = Math.min(HELP.length - 1, d.index + 1); m.emit(); } else m.moveDialog(1); return true; }
-      if (c === "k" || key.name === "up") { if (d.kind === "help") { d.index = Math.max(0, d.index - 1); m.emit(); } else m.moveDialog(-1); return true; }
-      if (key.name === "return") { if (d.kind === "help") m.cancel(); else m.submit(); return true; }
-      if (c === "q") { m.cancel(); return true; }
-      return true;
+      this.syncInput();
+      for (let i = 2; i < h - 1; i++) output[i] = line("");
+      const title = { help: "KEYS", filter: "FILTER", projects: "PROJECTS", search: "SEARCH", add: "ADD TASK", edit: "EDIT TASK", delete: "DELETE TASK?", "section-add": "NEW SECTION", "section-remove": "REMOVE EMPTY SECTION?" }[d.kind];
+      output[2] = line(` ${title}`, 1);
+      let items: Line[] = [];
+      if ("value" in d) {
+        const parts = graphemes(d.value);
+        const before = parts.slice(0, this.cursor).join("");
+        const after = parts.slice(this.cursor).join("");
+        // Show the insertion point and nearby text even on small terminals.
+        const tail = graphemes(before);
+        while (Bun.stringWidth(tail.join("")) > Math.max(0, w - 8)) tail.shift();
+        items.push(line(` > ${tail.join("")}|${after}`));
+        if (d.kind === "add") items.push(line(`Section: ${d.doc.sections.find(s => s.id === d.sectionId)?.title || "General"} · Tab changes`));
+        if (m.error) items.push(line(`ERROR: ${m.message}`, 31));
+        output[h - 1] = line("Enter save · Esc cancel · Ctrl+a select all");
+      } else if (d.kind === "help") {
+        items = HELP.slice(d.index, d.index + h - 4).map(t => line(t));
+        output[h - 1] = line("j/k scroll · Esc close");
+      } else if (d.kind === "filter" || d.kind === "projects") {
+        const choices = d.kind === "filter" ? filters.map(f => f === "all" ? "All" : `[${f}] ${statusNames[f]}`) : m.navigation.map(n => `${n.label}${n.error ? " (unavailable)" : ""}`);
+        const start = windowStart(d.index, choices.length, h - 4);
+        items = choices.slice(start, start + h - 4).map((t, i) => line(`${start + i === d.index ? ">" : " "} ${t}`));
+        output[h - 1] = line("j/k choose · Enter apply · Esc cancel");
+      } else {
+        items = [line(d.kind === "delete" ? d.row.task.text : d.title)];
+        if (m.error) items.push(line(`ERROR: ${m.message}`, 31));
+        output[h - 1] = line("y confirm · n/Esc cancel");
+      }
+      for (let i = 0; i < Math.min(items.length, h - 4); i++) output[i + 3] = items[i]!;
     }
-    if (m.pendingKey) { m.pendingKey = ""; if (c === "a") m.toggleSelected(); else if (c === "M" || c === "R") m.setAllCollapsed(c === "M"); else m.emit(); return true; }
-    if (c === "q") { this.renderer.destroy(); return true; }
-    if (c === "g") { m.global(); return true; }
-    if (c === "w") { m.inProgress(); return true; }
-    if (c === "t") { m.allTasks(); return true; }
-    if (c === "p") { m.begin("projects"); return true; }
-    if (c === "r") { m.reload(); return true; }
-    if (c === "?") { m.begin("help"); return true; }
-    if (key.name === "tab") { m.setFocus(m.focus === "content" ? "sidebar" : "content"); return true; }
-    if (key.name === "down" || c === "j") { m.move(1); return true; }
-    if (key.name === "up" || c === "k") { m.move(-1); return true; }
-    if (key.name === "home") { m.move(-m.length); return true; }
-    if (key.name === "end") { m.move(m.length); return true; }
-    if (key.ctrl && key.name === "d") { m.move(this.listRows); return true; }
-    if (key.ctrl && key.name === "u") { m.move(-this.listRows); return true; }
-    if (key.name === "return") { if (m.focus === "sidebar") m.openNavigation(); else if (m.view === "projects") m.openProject(); else if (m.selectedNode?.kind !== "task") m.toggleSelected(); else if (!m.local) m.openTaskProject(); return true; }
-    if (key.name === "escape") { if (m.focus === "sidebar") m.setFocus("content"); else if (m.query || m.filter !== "all") m.clearFilters(); else m.global(); return true; }
-    if (m.focus !== "content") return true;
-    if (c === "/") { m.begin("search"); return true; }
-    if (m.view !== "tasks") return true;
-    if (c === "f") { m.begin("filter"); return true; }
-    if (c === "z") { m.pendingKey = "z"; m.emit(); return true; }
-    if (key.name === "space" || c === " ") { m.changeStatus(); return true; }
-    if (["1", "2", "3"].includes(c)) { if (m.selected) m.changeStatus(filters[Number(c)] as " " | "/" | "x"); return true; }
-    if (c === "S") { m.begin("section-add"); return true; }
-    if (c === "D" || (c === "d" && m.selectedNode?.kind === "section")) { m.begin("section-remove"); return true; }
-    if (c === "a" || c === "e" || c === "d") { m.begin(({ a: "add", e: "edit", d: "delete" } as const)[c]); return true; }
+    return output;
+  }
+  handle(key: Key, height = 24) {
+    const m = this.model, c = key.text;
+    if (key.ctrl && key.name === "c") { this.quit(); return; }
+    if (m.busy) return;
+    this.syncInput();
+    const d = m.dialog;
+    if (key.paste && (!d || !("value" in d))) return;
+    if (d) {
+      if (key.name === "escape") { m.cancel(); return; }
+      if ("value" in d) {
+        let parts = graphemes(d.value);
+        if (key.ctrl && key.name === "a") { this.replaceSelection = true; this.changed(); return; }
+        if (key.name === "left") this.cursor = Math.max(0, this.cursor - 1);
+        else if (key.name === "right") this.cursor = Math.min(parts.length, this.cursor + 1);
+        else if (key.name === "home") this.cursor = 0;
+        else if (key.name === "end") this.cursor = parts.length;
+        else if (key.name === "return") { m.submit(); return; }
+        else if (key.name === "tab") { if (d.kind === "add") m.cycleSection(); return; }
+        else if (key.name === "backspace" || key.name === "delete") {
+          if (this.replaceSelection) { parts = []; this.cursor = 0; }
+          else if (key.name === "backspace" && this.cursor > 0) parts.splice(--this.cursor, 1);
+          else if (key.name === "delete") parts.splice(this.cursor, 1);
+          this.replaceSelection = false; m.input(parts.join("")); return;
+        } else if (c && !key.ctrl) {
+          if (this.replaceSelection) { parts = []; this.cursor = 0; }
+          const added = graphemes(clean(c)); parts.splice(this.cursor, 0, ...added);
+          this.cursor = graphemes(parts.slice(0, this.cursor + added.length).join("")).length;
+          this.replaceSelection = false; m.input(parts.join("")); return;
+        }
+        this.replaceSelection = false; this.changed(); return;
+      }
+      if (d.kind === "delete" || d.kind === "section-remove") { if (c === "y") m.submit(); else if (c === "n") m.cancel(); return; }
+      if (c === "q") { m.cancel(); return; }
+      if (key.name === "return") { if (d.kind === "help") m.cancel(); else m.submit(); return; }
+      const amount = c === "j" || key.name === "down" ? 1 : c === "k" || key.name === "up" ? -1 : 0;
+      if (d.kind === "help") { d.index = Math.max(0, Math.min(HELP.length - 1, d.index + amount)); m.emit(); }
+      else m.moveDialog(amount);
+      return;
+    }
+    if (m.pendingKey) { m.pendingKey = ""; if (c === "a") m.toggleSelected(); else if (c === "M" || c === "R") m.setAllCollapsed(c === "M"); else m.emit(); return; }
+    if (c === "q") { this.quit(); return; }
+    if (c === "g") { m.global(); return; }
+    if (c === "w") { m.inProgress(); return; }
+    if (c === "t") { m.allTasks(); return; }
+    if (c === "p") { m.begin("projects"); return; }
+    if (c === "r") { m.reload(); return; }
+    if (c === "?") { m.begin("help"); return; }
+    if (key.name === "tab") { m.setFocus(m.focus === "content" ? "sidebar" : "content"); return; }
+    if (key.name === "down" || c === "j") { m.move(1); return; }
+    if (key.name === "up" || c === "k") { m.move(-1); return; }
+    if (key.name === "home") { m.move(-m.length); return; }
+    if (key.name === "end") { m.move(m.length); return; }
+    if (key.name === "pagedown" || (key.ctrl && key.name === "d")) { m.move(Math.max(1, height - 4)); return; }
+    if (key.name === "pageup" || (key.ctrl && key.name === "u")) { m.move(-Math.max(1, height - 4)); return; }
+    if (key.name === "return") { if (m.focus === "sidebar") m.openNavigation(); else if (m.view === "projects") m.openProject(); else if (m.selectedNode?.kind !== "task") m.toggleSelected(); else if (!m.local) m.openTaskProject(); return; }
+    if (key.name === "escape") { if (m.focus === "sidebar") m.setFocus("content"); else if (m.query || m.filter !== "all") m.clearFilters(); else m.global(); return; }
+    if (m.focus !== "content") return;
+    if (c === "/") { m.begin("search"); return; }
+    if (m.view !== "tasks") return;
+    if (c === "f") { m.begin("filter"); return; }
+    if (c === "z") { m.pendingKey = "z"; m.emit(); return; }
+    if (key.name === "space") { m.changeStatus(); return; }
+    if (c && ["1", "2", "3"].includes(c)) { if (m.selected) m.changeStatus(filters[Number(c)] as " " | "/" | "x"); return; }
+    if (c === "S") { m.begin("section-add"); return; }
+    if (c === "D" || (c === "d" && m.selectedNode?.kind === "section")) { m.begin("section-remove"); return; }
+    if (c === "a" || c === "e" || c === "d") { m.begin(({ a: "add", e: "edit", d: "delete" } as const)[c]); return; }
     if (c === "o" && m.selected) {
       const row = m.selected; m.busy = true; m.notice("Neovim is open");
-      void this.onEditor(row).then(() => m.reload()).catch(error => m.notice(String(error), true)).finally(() => { m.busy = false; m.emit(); });
-      return true;
+      void this.editor(row).then(() => m.reload()).catch(error => m.notice(String(error), true)).finally(() => { m.busy = false; m.emit(); });
     }
-    return false;
-  }
-  dispose() {
-    if (this.destroyed) return;
-    this.destroyed = true;
-    this.unsubscribe();
-    this.renderer.keyInput.off("keypress", this.onKey);
-    this.renderer.off("resize", this.onResize);
-    // Renderer owns and recursively destroys the attached tree.
   }
 }
 
-export async function openInNeovim(renderer: CliRenderer, row: TaskRow) {
-  renderer.suspend();
-  try {
-    const child = Bun.spawn(["nvim", `+${row.task.line}`, "--", row.doc.path], { stdin: "inherit", stdout: "inherit", stderr: "inherit" });
-    const code = await child.exited;
-    if (code !== 0) throw new Error(`Neovim exited with status ${code}. Press r to reload.`);
-  } finally { renderer.resume(); }
-}
 export async function launch(local?: string) {
-  const renderer = await createCliRenderer({ exitOnCtrlC: true, backgroundColor: "transparent", consoleMode: "disabled" });
+  const input = process.stdin, output = process.stdout;
+  const keys = new KeyDecoder(), utf8 = new StringDecoder("utf8");
+  let app: AnsiApp | undefined, stopped = false, suspended = false, scheduled = false;
+  let escapeTimer: ReturnType<typeof setTimeout> | undefined;
+  const originalRaw = !!input.isRaw;
+  const enter = () => { output.write(`${ESC}?1049h${ESC}?25l${ESC}?2004h${RESET}`); input.setRawMode(true); input.resume(); };
+  const leave = () => { output.write(`${RESET}${ESC}?2004l${ESC}?25h${ESC}?1049l`); input.setRawMode(originalRaw); };
+  const render = () => {
+    scheduled = false;
+    if (!stopped && !suspended && app) output.write(encodeFrame(app.frame(output.columns || 80, output.rows || 24), output.columns || 80));
+  };
+  const changed = () => { if (!scheduled && !stopped) { scheduled = true; queueMicrotask(render); } };
+  const onData = (data: Buffer) => {
+    clearTimeout(escapeTimer);
+    for (const key of keys.feed(utf8.write(data))) {
+      if (stopped) break;
+      app?.handle(key, output.rows || 24);
+    }
+    escapeTimer = setTimeout(() => { for (const key of keys.flush()) app?.handle(key, output.rows || 24); }, 35);
+  };
+  const stop = () => {
+    if (stopped) return;
+    stopped = true; clearTimeout(escapeTimer); app?.dispose();
+    input.off("data", onData); input.pause(); output.off("resize", changed);
+    process.off("SIGINT", stop); process.off("SIGTERM", stop); process.off("SIGHUP", stop); process.off("exit", stop);
+    leave();
+  };
+  const editor = async (row: TaskRow) => {
+    suspended = true; input.off("data", onData); clearTimeout(escapeTimer); input.pause(); leave();
+    try {
+      const child = Bun.spawn(["nvim", `+${row.task.line}`, "--", row.doc.path], { stdin: "inherit", stdout: "inherit", stderr: "inherit" });
+      const code = await child.exited;
+      if (code !== 0) throw new Error(`Neovim exited ${code}`);
+    } finally { if (!stopped) { enter(); input.on("data", onData); suspended = false; changed(); } }
+  };
   try {
-    // Resolve the terminal's real colors once, rather than leaving blank cells
-    // dependent on default-color/erase state after inverse selection rows.
-    const palette = await renderer.getPalette({ size: 16, timeout: 300 });
-    Object.assign(color, terminalTheme(palette, renderer.themeMode));
-    renderer.setBackgroundColor(color.bg);
-    new CoreApp(renderer, local);
-  } catch (error) { renderer.destroy(); throw error; }
+    enter();
+    process.on("SIGINT", stop); process.on("SIGTERM", stop); process.on("SIGHUP", stop); process.on("exit", stop);
+    app = new AnsiApp(new TodoModel(local), changed, stop, editor);
+    input.on("data", onData); output.on("resize", changed); render();
+  } catch (error) { stop(); throw error; }
 }
