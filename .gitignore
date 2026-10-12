@@ -9,3 +9,5 @@ dist/
 *.todox.lock
 *.tmp
 .DS_Store
+
+TODO.md
