@@ -6,6 +6,12 @@ The distribution is named `todox-tui` (the PyPI name `todox` belongs to an unrel
 
 ## Unreleased
 
+- Open local tasks immediately and sync in an owned background process. Quit stops and reaps it promptly instead of waiting for a network thread; interrupted uploads retain their journal records. View changes and display workers no longer cancel sync.
+- Short, plain-language sync output by default; hide normal skips and internal paths, summarize optional cleanup once, show actual changes and actionable review items. `--verbose` retains the detailed report; JSON output stays compatible.
+- Keep conflict-resolution failures visible and run resolution in the background, without blocking keyboard navigation or quitting.
+
+- Audit fixes: preserve edits made during upload, reject stale local/remote writes and retirement, retain remote-only metadata, handle mixed-case tags consistently, and keep failed TUI resolutions visible. Read-only previews cannot execute conflict resolution; uncertain server errors cannot blindly repeat creation.
+
 - SQLite-backed project registry and sync mappings, with read-only legacy JSON fallback, atomic migration, private snapshots and consistent database backups. Markdown remains the editable local task source.
 - Durable sync-run/operation history, recoverable interrupted imports, unknown-upload retry protection, field-level baseline snapshots and safe independent text/status merging.
 - Sync project tags across Inbox and all accessible TickTick lists, retain actual remote list ids, and pause removed or ambiguous project tags. Capped discovery stops rather than implying deletion.
