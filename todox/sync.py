@@ -168,10 +168,57 @@ class Plan:
     def describe(self) -> list[str]:
         lines = []
         for change in self.changes:
-            label = change.action if change.action not in {"skip", "conflict"} else "paused"
-            detail = change.reason or change.error
+            label = "failed" if change.error else "kept" if change.action == "skip" else "review" if change.action == "conflict" else change.action
+            detail = change.error or change.reason
             lines.append(f"{label:<7} {change.name or change.project} · {change.text}{f' — {detail}' if detail else ''}")
         return lines or ["Already in sync."]
+
+    def result_counts(self) -> tuple[int, int, int, int]:
+        successful = [c for c in self.changes if not c.error]
+        sent = sum(c.action in {"create", "update", "merge"} for c in successful)
+        received = sum(c.action in {"pull", "import", "merge"} for c in successful)
+        removed = sum(c.action == "delete" or (c.action == "retire" and bool(c.remote)) for c in successful)
+        failures = sum(bool(c.error) for c in self.changes)
+        return sent, received, removed, failures
+
+    def status_message(self, dry_run: bool = False) -> str:
+        sent, received, removed, failures = self.result_counts()
+        parts = []
+        for count, verb in [(sent, "sent"), (received, "received"), (removed, "removed from TickTick")]:
+            if count:
+                if dry_run:
+                    verb = {"sent": "to send", "received": "to receive", "removed from TickTick": "to remove from TickTick"}[verb]
+                parts.append(f"{count} {verb}")
+        if not parts:
+            parts.append("no changes planned" if dry_run else "no changes made")
+        conflicts = sum(c.action == "conflict" for c in self.changes)
+        if conflicts:
+            parts.append(f"{conflicts} task{'s' if conflicts != 1 else ''} need{'s' if conflicts == 1 else ''} review")
+        if failures:
+            parts.append(f"{failures} failed")
+        prefix = "Sync preview" if dry_run else "Sync incomplete" if failures else "Sync finished"
+        return prefix + " · " + " · ".join(parts)
+
+    def compact_lines(self, dry_run: bool = False) -> list[str]:
+        lines = [self.status_message(dry_run)]
+        attention = [c for c in self.changes if c.action == "conflict" or c.error]
+        unavailable = [c for c in self.changes if c.action == "skip" and
+                       ("could not be read" in c.reason or "tag was removed" in c.reason)]
+        for change in attention[:5]:
+            name = change.name or (Path(change.project).parent.name if change.project else "TickTick")
+            reason = friendly_error(change.error) if change.error else review_reason(change)
+            title = f" — {change.text}" if change.text else ""
+            lines.append(f"{'Failed' if change.error else 'Review'} {name}: {reason}{title}")
+        if len(attention) > 5:
+            lines.append(f"{len(attention) - 5} more tasks need attention.")
+        if unavailable:
+            lines.append(f"{len(unavailable)} task{'s' if len(unavailable) != 1 else ''} left unchanged: project unavailable or tag removed.")
+        completed = sum(c.action == "skip" and c.reason.startswith("completed locally;") for c in self.changes)
+        if completed:
+            lines.append(f"Optional cleanup: {completed} completed task{'s' if completed != 1 else ''} remain{'s' if completed == 1 else ''} in TickTick.")
+        if attention or unavailable or completed:
+            lines.append("Details: todo sync --dry-run --verbose")
+        return lines
 
     def project_summary(self) -> dict[str, dict[str, int]]:
         result: dict[str, dict[str, int]] = {}
@@ -180,6 +227,34 @@ class Plan:
             key = f"{change.action}:error" if change.error else change.action
             tally[key] = tally.get(key, 0) + 1
         return result
+
+
+def friendly_error(message: str) -> str:
+    if message.startswith("[Errno"):
+        return "local file could not be read or saved; run todo doctor"
+    if message.startswith(("Database operation failed", "Cannot open database")):
+        return "local sync data is unavailable; run todo doctor"
+    if "project_task_limit_exceeded" in message:
+        return "TickTick's task limit was reached; complete or remove tasks before retrying"
+    if "Cannot reach TickTick" in message:
+        return "cannot connect to TickTick; check your connection and try again"
+    if "rejected the token" in message:
+        return "sign-in expired; run todo ticktick login"
+    if "TickTick " in message and " failed (" in message:
+        return "TickTick could not complete the request; try again or use --verbose for details"
+    return message
+
+
+def review_reason(change: Change) -> str:
+    if "duplicate" in change.reason or "this title" in change.reason or "unlinked" in change.reason:
+        return "possible duplicate"
+    if "multiple local projects" in change.reason:
+        return "more than one project tag"
+    if "uncertain" in change.reason:
+        return "last upload needs verification"
+    if "changed" in change.reason:
+        return "both copies were edited"
+    return "task linking needs review"
 
 
 def _section_title(doc: Document, line: int) -> str:
@@ -213,11 +288,14 @@ class Sync:
         self.path = path
         self.registry = registry
         self.database = Database(path, registry)
+        revision_before = self._disk_revision()
         self.state = state if state is not None else State.load(path, registry)
         self._operation = ""
         self._create_sent = False
         self.applied = False
         self._revision = self._disk_revision()
+        if revision_before != self._revision:
+            raise TickTickError("Sync state changed while loading; retry with a fresh snapshot.")
 
     def _disk_revision(self) -> str:
         legacy = _legacy_source(self.path, self.registry)
@@ -242,6 +320,7 @@ class Sync:
         plan = Plan(list_id, list_name)
         local: dict[str, tuple[Project, Task]] = {}
         unavailable = {str(p.path) for p in projects if not p.doc or not p.sync_enabled}
+        disabled = {str(p.path) for p in projects if not p.sync_enabled}
         registered = {str(p.path) for p in projects}
         tag_counts: dict[str, int] = {}
         for p in projects:
@@ -278,7 +357,7 @@ class Sync:
                     if task.status == "x":
                         continue  # Historical completed tasks are local-only.
                     matches = [r for r in remote if _same_title(task, r) and str(r["id"]) not in claimed
-                               and project.name.strip().lower()[:64] in (r.get("tags") or [])]
+                               and project.name.strip().lower()[:64] in {str(t).lower() for t in r.get("tags", [])}]
                     if matches:
                         claimed.update(str(r["id"]) for r in matches)
                         match = matches[0] if len(matches) == 1 else {}
@@ -302,7 +381,7 @@ class Sync:
                 if task.status == "x":
                     continue
                 matches = [r for r in remote if _same_title(task, r) and str(r["id"]) not in claimed
-                           and project.name.strip().lower()[:64] in (r.get("tags") or [])]
+                           and project.name.strip().lower()[:64] in {str(t).lower() for t in r.get("tags", [])}]
                 if len(matches) == 1:
                     claimed.add(str(matches[0]["id"]))
                     plan.changes.append(Change("conflict", uid, task.text, _project_name(project), str(project.path),
@@ -396,7 +475,9 @@ class Sync:
                 continue
             if entry.project in unavailable:
                 plan.changes.append(Change("skip", uid, "", project=entry.project,
-                                           reason="project file could not be read; no deletion planned"))
+                                           reason="project sync is disabled; task kept" if entry.project in disabled else
+                                           "project tag needs review; task kept" if entry.project in blocked else
+                                           "project file could not be read; no deletion planned"))
                 continue
             if entry.project not in registered and not cleanup_temp:
                 plan.changes.append(Change("skip", uid, "", project=entry.project,
@@ -469,6 +550,16 @@ class Sync:
             raise TickTickError("Cannot update a remote task without its TickTick list id.")
         return str(list_id)
 
+    def _check_remote(self, plan: Plan, change: Change) -> dict[str, Any]:
+        current = self.client.task(self._remote_list(plan, change), change.remote_id)
+        if current is None:
+            raise TickTickError("Remote task disappeared or moved since preview; refresh before writing.")
+        if change.remote and (remote_signature(current) != remote_signature(change.remote) or
+                              {str(t).lower() for t in current.get("tags", [])} !=
+                              {str(t).lower() for t in change.remote.get("tags", [])}):
+            raise TickTickError("Remote task changed since preview; replan before writing.")
+        return current
+
     def apply(self, plan: Plan) -> Plan:
         """Serialize writers and reject plans based on state changed by another process."""
         path = self.database.path
@@ -515,6 +606,7 @@ class Sync:
                 elif change.action == "import":
                     self._import(plan, change)
                 elif change.action == "delete":
+                    self._check_remote(plan, change)
                     self.client.delete_task(self._remote_list(plan, change), change.remote_id)
                     self.state.tasks.pop(change.uid, None)
                 elif change.action == "forget":
@@ -522,6 +614,7 @@ class Sync:
                 elif change.action == "remember":
                     self._pull(plan, change)
                 elif change.action == "merge":
+                    self._check_remote(plan, change)
                     doc = read(Path(change.project))
                     task = _find_uid(doc, change.uid)
                     if task is None or change.local_before != {"text": task.text, "status": task.status}:
@@ -537,6 +630,7 @@ class Sync:
                     if task is None or task.status != "x" or task.text != change.text:
                         raise TickTickError("Completed task changed since preview. Refresh before cleanup.")
                     if change.remote:
+                        self._check_remote(plan, change)
                         self.client.delete_task(self._remote_list(plan, change), change.remote_id)
                     self.state.tasks[change.uid].retired = True
                 entry = self.state.tasks.get(change.uid)
@@ -545,9 +639,8 @@ class Sync:
             except (OSError, ValueError, TickTickError) as exc:
                 change.error = str(exc)
                 linked = self.state.tasks.get(change.uid)
-                uncertain = self._create_sent and (linked is None or linked.retired) and (
-                    "Cannot reach TickTick" in str(exc) or "return an id" in str(exc)
-                    or isinstance(exc, (OSError, json.JSONDecodeError)))
+                uncertain = self._create_sent and (linked is None or linked.retired) and not (
+                    isinstance(exc, TickTickError) and exc.rejected)
                 self.database.fail_operation(self._operation, str(exc), uncertain)
             finally:
                 self._operation = ""
@@ -642,6 +735,8 @@ class Sync:
 
     def resolve(self, projects: list[Project], uid: str, keep: str) -> Change:
         """Force one conflicted task to the chosen side, then re-plan in the caller."""
+        if not uid:
+            raise TickTickError("This conflict has no unambiguous local identity. Review its remote id and project tags first.")
         plan = self.plan(projects)
         change = next((c for c in plan.changes if c.uid == uid), None)
         if change is None:
@@ -682,6 +777,8 @@ class Sync:
 
     def _push_create(self, plan: Plan, change: Change) -> None:
         doc, task = self._stamp(change)
+        if (task.text, task.status) != (change.text, change.status):
+            raise TickTickError("Local task changed since preview; refresh before uploading.")
         entry = self.state.tasks.get(change.uid)
         target_list = entry.list_id if entry and entry.retired and entry.list_id else plan.list_id
         tag = self.client.ensure_tag(change.name)
@@ -700,27 +797,35 @@ class Sync:
         self.state.save(self.path, self.registry, self._operation, remote_id, complete=False)
         if task.status == "x":
             self.client.complete_task(target_list, remote_id)
-        stamped = read(doc.path).tasks
-        fresh = next((t for t in stamped if t.uid == change.uid), task)
-        remote_now = {"id": remote_id, "projectId": target_list, "title": fresh.text,
-                       "status": 2 if fresh.status == "x" else 0, "tags": tags,
-                      "completedTime": f"{(fresh.completed or _today())}T00:00:00+0000" if fresh.status == "x" else ""}
-        self._remember(change.uid, remote_id, plan, fresh, remote_now, _section_title(doc, task.section), change.project)
+        # Baseline exactly what was sent, not a later file edit made while the
+        # request was in flight. Later edits must remain pending for next sync.
+        remote_now = {"id": remote_id, "projectId": target_list, "title": task.text,
+                      "status": 2 if task.status == "x" else 0, "tags": tags,
+                      "completedTime": f"{(task.completed or _today())}T00:00:00+0000" if task.status == "x" else ""}
+        self._remember(change.uid, remote_id, plan, task, remote_now, _section_title(doc, task.section), change.project)
 
     def _push_update(self, plan: Plan, change: Change) -> None:
         doc = read(Path(change.project))
         task = _find_uid(doc, change.uid)
+        if task is None and change.local_before:
+            raise TickTickError("Local task disappeared since preview; update paused.")
         if task is None:
             doc, task = self._stamp(change)
         if change.local_before and change.local_before != {"text": task.text, "status": task.status}:
             raise TickTickError("Local task changed since preview; refresh before syncing.")
+        current = self._check_remote(plan, change)
         tag = self.client.ensure_tag(change.name)
         tags = list(dict.fromkeys([str(t) for t in change.remote.get("tags", []) if t != IN_PROGRESS_TAG] + [tag]))
         if task.status == "/":
             tags.append(self.client.ensure_tag(IN_PROGRESS_TAG))
         remote_list = self._remote_list(plan, change)
-        payload = {"id": change.remote_id, "projectId": remote_list, "title": task.text,
-                   "tags": tags, "status": 2 if task.status == "x" else 0}
+        # Send current values for writable remote-only fields as well, so API
+        # defaults cannot clear priorities, reminders, notes or schedules.
+        remote_fields = {"content", "desc", "isAllDay", "startDate", "dueDate", "timeZone",
+                         "reminders", "repeatFlag", "priority", "sortOrder", "items"}
+        payload = {key: value for key, value in current.items() if key in remote_fields}
+        payload.update({"id": change.remote_id, "projectId": remote_list, "title": task.text,
+                        "tags": tags, "status": 2 if task.status == "x" else 0})
         updated = self.client.update_task(change.remote_id, payload) or {}
         if task.status == "x" and remote_status(updated) != "x":
             self.client.complete_task(remote_list, change.remote_id)
@@ -736,6 +841,8 @@ class Sync:
         want_status, want_completed = remote_status(remote), remote_completed(remote)
         doc = read(path)
         task = _find_uid(doc, change.uid)
+        if task is None and change.local_before:
+            raise TickTickError("Local task disappeared since preview; remote edit was not imported.")
         if task is None and _find_unlinked(doc, change):
             doc, task = self._stamp(change)
         if task and change.local_before and change.local_before != {"text": task.text, "status": task.status}:
@@ -789,6 +896,8 @@ class Sync:
         entry = self.state.tasks.get(uid)
         if entry is None:
             raise TickTickError(f"No synced task with id {uid}.")
-        self.client.delete_task(entry.list_id or plan.list_id or self.state.list_id, entry.ticktick_id)
-        self.state.tasks.pop(uid, None)
-        self.state.save(self.path, self.registry)
+        source = next((c.remote for c in plan.changes if c.uid == uid and c.remote), {})
+        change = Change("delete", uid, "", project=entry.project, remote_id=entry.ticktick_id, remote=source)
+        applied = self.apply(Plan(plan.list_id or self.state.list_id, plan.list_name, [change]))
+        if applied.changes[0].error:
+            raise TickTickError(applied.changes[0].error)

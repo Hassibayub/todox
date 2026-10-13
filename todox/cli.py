@@ -30,7 +30,7 @@ HELP = """todo — Markdown tasks in your terminal
   todo projects                List registered files
   todo project NAME --local-only | --sync  Control project syncing
   todo stats [--json]          Task counts for scripts
-  todo sync                    Two-way TickTick sync (--dry-run, --json)
+  todo sync                    Two-way sync; short summary (--dry-run, --verbose, --json)
   todo sync status             Local sync status (no network)
   todo sync history            Recent runs (no network)
   todo sync recover            Recover interrupted bookkeeping (no remote writes)
@@ -80,13 +80,14 @@ def run(args: list[str] | None = None, cwd: Path | None = None) -> int:
     if command == "project" and len(args) == 3 and args[2] in {"--local-only", "--sync"}:
         from dataclasses import replace
         from .projects import save_config
+        revision = Database().revision()
         projects = load_config()
         matches = [p for p in projects if p.name.casefold() == args[1].casefold()]
         if len(matches) != 1:
             raise ValueError("Choose exactly one registered project name from todo projects.")
         selected = matches[0]
         enabled = args[2] == "--sync"
-        save_config([replace(p, sync_enabled=enabled) if p.path == selected.path else p for p in projects])
+        save_config([replace(p, sync_enabled=enabled) if p.path == selected.path else p for p in projects], expected_revision=revision)
         print(f'{selected.name}: {"sync enabled" if enabled else "local-only"}; no remote tasks changed')
         return 0
     if command == "db" and len(args) == 2:
@@ -156,13 +157,15 @@ def run(args: list[str] | None = None, cwd: Path | None = None) -> int:
             print(json.dumps(status.get("runs", []) if args[1] == "history" else status, indent=2))
             return 0
         flags = args[1:]
-        known = {"--dry-run", "--json", "--allow-deletes", "--cleanup-temp"}
+        known = {"--dry-run", "--verbose", "--json", "--allow-deletes", "--cleanup-temp"}
         keep, keep_uid = "", ""
         rest: list[str] = []
         index = 0
         while index < len(flags):
             flag = flags[index]
             if flag in {"--keep-local", "--keep-remote"}:
+                if keep:
+                    raise ValueError("Choose exactly one conflict resolution flag.")
                 if index + 1 >= len(flags):
                     raise ValueError(f"{flag} needs a task id from `todo sync --json`.")
                 keep, keep_uid = flag.removeprefix("--keep-"), flags[index + 1]
@@ -172,9 +175,13 @@ def run(args: list[str] | None = None, cwd: Path | None = None) -> int:
                 raise ValueError(f"Unknown option: {flag}")
             rest.append(flag)
             index += 1
+        if keep_uid and "--dry-run" in rest:
+            raise ValueError("Conflict resolution cannot be combined with --dry-run; preview with todo sync --dry-run first.")
         client = TickTick(Auth.load().require_token())
         engine = Sync(client)
         projects = load_projects(load_config())
+        if sys.stdout.isatty() and "--json" not in rest:
+            print("Checking TickTick…" if "--dry-run" in rest else "Syncing with TickTick…", flush=True)
         if keep_uid:
             change = engine.resolve(projects, keep_uid, keep)
             print(f"Failed: {change.error}" if change.error else f"Kept {keep} for {keep_uid}: {change.text or change.reason}")
@@ -188,10 +195,11 @@ def run(args: list[str] | None = None, cwd: Path | None = None) -> int:
                  {"action": c.action, "uid": c.uid, "remoteId": c.remote_id, "text": c.text, "project": c.name or c.project,
                  "reason": c.reason, "error": c.error} for c in plan.changes]}, indent=2))
         else:
-            print("\n".join(plan.describe()))
-            tally = plan.summary()
-            print("Dry run · " if "--dry-run" in rest else "Synced · ", end="")
-            print(", ".join(f"{count} {name}" for name, count in sorted(tally.items())) if tally else "already in sync")
+            if "--verbose" in rest:
+                print("\n".join(plan.describe()))
+                print(plan.status_message("--dry-run" in rest))
+            else:
+                print("\n".join(plan.compact_lines("--dry-run" in rest)))
         return 1 if any(c.error for c in plan.changes) else 0
     if args and args[0] in {"sync", "ticktick"}:
         raise ValueError("Unknown arguments. Run todo --help.")
@@ -228,7 +236,9 @@ def main() -> None:
     try:
         raise SystemExit(run())
     except (OSError, ValueError, UnicodeError, json.JSONDecodeError) as exc:
-        print(f"todo: {exc}", file=sys.stderr)
+        from .sync import friendly_error
+        message = friendly_error(str(exc)) if sys.argv[1:2] == ["sync"] and "--verbose" not in sys.argv else str(exc)
+        print(f"todo: {message}", file=sys.stderr)
         raise SystemExit(1) from exc
 
 

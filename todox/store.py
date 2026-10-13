@@ -196,6 +196,7 @@ def save(doc: Document, kind: str, **kwargs: object) -> Document:
     fd = os.open(lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
     temp: str | None = None
     try:
+        os.write(fd, str(os.getpid()).encode("ascii"))
         if path.read_bytes().decode("utf-8") != doc.content:
             raise ValueError("TODO.md changed outside todox. Refresh and try again.")
         updated = mutate(doc, kind, **kwargs)

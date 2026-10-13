@@ -8,7 +8,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from asyncio import to_thread
 import os
 import subprocess
 import sys
@@ -24,7 +23,8 @@ from textual.widgets import Input, ListItem, ListView, Static
 
 from .projects import Project, load_config, load_projects
 from .store import Document, Section, Task, counts, main_section, save
-from .sync import Change, Sync
+from .sync import Change, Plan, Sync, friendly_error, review_reason
+from .background import BackgroundSync
 from .ticktick import Auth, TickTick, TickTickError
 
 
@@ -105,6 +105,8 @@ class TodoApp(App[None]):
         self.conflicts: list[Change] = []
         self.sync_running = False
         self._engine: Sync | None = None
+        self._background = BackgroundSync()
+        self._quitting = False
         self.message = ""
         self._return_page = self.page
         self._reload_data()
@@ -122,7 +124,7 @@ class TodoApp(App[None]):
         await self.draw()
         self.query_one("#items", ListView).focus()
         if self.auto_sync_enabled:
-            self.run_worker(self.auto_sync(), exclusive=True)
+            self.run_worker(self.auto_sync(), exclusive=True, group="ticktick")
 
     def _reload_data(self) -> None:
         try:
@@ -212,9 +214,13 @@ class TodoApp(App[None]):
         if row.kind == "conflict":
             change = row.change
             assert change
-            label = change.name or change.project or change.uid
+            label = change.name or (Path(change.project).parent.name if change.project else "TickTick")
+            reason = review_reason(change)
+            reason = reason[0].upper() + reason[1:]
             body = Text.assemble((marker, "bold" if selected else ""), (label + " · ", "dim"),
-                                 (change.text or change.uid, "bold"), (f"\n  {change.reason}", "dim"))
+                                 (change.text or "Task needs review", "bold"), (f"\n  {reason}", "dim"))
+            if change.remote and change.remote.get("title") != change.text:
+                body.append(f"\n  TickTick: {change.remote.get('title', '')}", "dim")
             return RowRender(body, "conflict-row")
         if row.kind == "project":
             p = row.project
@@ -302,7 +308,7 @@ class TodoApp(App[None]):
 
     def _update_chrome(self) -> None:
         project = self._project()
-        title = {"projects": "Projects", "tasks": "Open tasks", "help": "Keys", "conflicts": "Sync conflicts"}.get(self.page, project.name if project else "Project")
+        title = {"projects": "Projects", "tasks": "Open tasks", "help": "Keys", "conflicts": "Tasks needing review"}.get(self.page, project.name if project else "Project")
         self.query_one("#title", Static).update(Text(title, style="bold"))
         empty = self.query_one("#empty", Static)
         if self.page == "projects":
@@ -312,27 +318,31 @@ class TodoApp(App[None]):
         elif self.page == "detail":
             message = project.error if project and project.error else "No tasks yet · n to add one"
         elif self.page == "conflicts":
-            message = "Both TODO.md and TickTick changed these tasks · pick a side"
+            message = "These tasks need review before they can sync."
         else:
             message = ""
         empty.update(message)
         empty.display = not self.rows
         footer = self.query_one("#footer", Static)
-        if self.page == "conflicts":
-            hint = "1 keep local   2 keep remote   Esc back"
-        elif self.message:
+        if self.message:
             hint = self.message
+        elif self.sync_running:
+            hint = "Syncing… · q to quit"
+        elif self.page == "conflicts":
+            selected = self._selected()
+            if selected and selected.change and selected.change.uid and selected.change.remote:
+                hint = "1 keep TODO.md   2 keep TickTick   Esc back"
+            else:
+                hint = "Review this task in TickTick · Esc back"
         elif self.page == "projects":
             hint = "c copy path   Enter open   p projects   t tasks   ? keys"
         elif self.page == "tasks":
             hint = "Enter open project   p projects   w wrap   ? keys"
         elif self.page == "detail":
             hint = "n new   e edit   y copy   u completed   d dates   w wrap   ? keys" + ("   p projects" if not self.local else "")
-        elif self.page == "conflicts":
-            hint = "1 keep local   2 keep remote   Esc back"
         else:
             hint = "Esc close   q quit"
-        if self.size.width < 43 and not self.message:
+        if self.size.width < 43 and not self.message and not self.sync_running:
             hint = "? keys   q quit"
         footer.update(hint)
         footer.display = self.size.height >= 5 and (not self.prompt_kind or bool(self.message))
@@ -635,7 +645,23 @@ class TodoApp(App[None]):
             self.message = str(exc)
             self._update_chrome()
             return
-        self.run_worker(self._sync(client, announce=True), exclusive=True)
+        self.run_worker(self._sync(client, announce=True), exclusive=True, group="ticktick")
+
+    def action_quit(self) -> None:
+        self._quitting = True
+        self._background.stop()
+        self.workers.cancel_all()
+        self.exit()
+
+    def on_unmount(self) -> None:
+        self._quitting = True
+        self._background.stop()
+
+    async def _run_background(self, client: TickTick, announce: bool, uid: str = "", keep: str = "") -> dict:
+        return await self._background.run({"token": client.token, "announce": announce,
+                                           "registry": str(self.registry) if self.registry else None,
+                                           "uid": uid, "keep": keep,
+                                           "files": [str(p.path) for p in self.projects_data]})
 
     def _sync_blocking(self, client: TickTick, announce: bool = True) -> tuple[Sync, object]:
         engine = Sync(client, registry=self.registry)
@@ -649,33 +675,36 @@ class TodoApp(App[None]):
         if self.sync_running:
             return
         self.sync_running = True
-        if announce:
-            self.message = "Syncing with TickTick…"
-            self._update_chrome()
+        self.message = "Syncing in background…"
+        self._update_chrome()
         try:
-            engine, plan = await to_thread(self._sync_blocking, client, announce)
+            result = await self._run_background(client, announce)
+            plan = Plan(result["plan"]["list_id"], result["plan"]["list_name"],
+                        [Change(**change) for change in result["plan"]["changes"]])
+            engine = Sync(client, registry=self.registry)
+            engine.applied = result["applied"]
         except (OSError, ValueError, TickTickError) as exc:
             self.sync_running = False
-            self.message = f"Sync failed · {exc}"
+            if self._quitting:
+                return
+            self.message = f"Sync failed · {friendly_error(str(exc))}"
             self._update_chrome()
             return
-        self.sync_running = False
+        finally:
+            self.sync_running = False
+        if self._quitting:
+            return
         self._engine = engine
         self._reload_data()
         if not announce and not engine.applied:
             self.message = "Sync preview required · run todo sync --dry-run before the first active-only sync"
             await self.draw()
             return
-        tally = plan.summary()
-        failures = [change for change in plan.changes if change.error]
         self.conflicts = [change for change in plan.changes if change.action == "conflict"]
-        if announce or tally or failures or self.conflicts:
-            self.message = "Synced · " + (", ".join(f"{count} {name}" for name, count in sorted(tally.items())) if tally else "no changes")
-            if failures:
-                self.message += f" · {len(failures)} failed"
-            if self.conflicts:
-                self.message += f" · {len(self.conflicts)} conflict" + ("s" if len(self.conflicts) > 1 else "")
+        self.message = plan.status_message()
         if self.conflicts and announce:
+            if not any(change.error for change in plan.changes):
+                self.message = ""
             self._return_page = self.page if self.page != "conflicts" else self._return_page
             self.page = "conflicts"
         await self.draw()
@@ -685,15 +714,31 @@ class TodoApp(App[None]):
         if self.page != "conflicts" or not row or not row.change or self.sync_running or not self._engine:
             return
         uid = row.change.uid
+        self.run_worker(self._resolve_in_background(uid, keep), exclusive=True, group="ticktick")
+
+    async def _resolve_in_background(self, uid: str, keep: str) -> None:
+        self.sync_running = True
+        self.message = "Resolving task in background…"
+        self._update_chrome()
         try:
-            change = await to_thread(self._engine.resolve, load_projects(load_config(self.registry)), uid, keep)
+            client = TickTick(Auth.load().require_token())
+            result = await self._run_background(client, True, uid, keep)
+            change = Change(**result["change"])
+            if change.error:
+                raise TickTickError(change.error)
         except (OSError, ValueError, TickTickError) as exc:
-            self.message = f"Could not resolve · {exc}"
+            if self._quitting:
+                return
+            self.message = f"Could not resolve · {friendly_error(str(exc))}"
             self._update_chrome()
+            return
+        finally:
+            self.sync_running = False
+        if self._quitting:
             return
         self.conflicts = [change_ for change_ in self.conflicts if change_.uid != uid]
         self._reload_data()
-        self.message = f"Kept {keep} · {change.text or uid}"
+        self.message = f"Used {'TODO.md' if keep == 'local' else 'TickTick'} · {change.text or uid}"
         if not self.conflicts:
             self.page = self._return_page
         await self.draw()

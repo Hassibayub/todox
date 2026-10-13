@@ -43,7 +43,7 @@ def load_config(path: Path | None = None) -> list[Project]:
     return result
 
 
-def save_config(projects: list[Project], path: Path | None = None) -> None:
+def save_config(projects: list[Project], path: Path | None = None, expected_revision: int | None = None) -> None:
     path = path or config_path()
     database = Database(registry=path)
     database.path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -52,6 +52,8 @@ def save_config(projects: list[Project], path: Path | None = None) -> None:
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError as exc:
             raise ValueError("A sync or registry update is running; retry after it finishes.") from exc
+        if expected_revision is not None and database.revision() != expected_revision:
+            raise ValueError("Registry changed while editing; reload and try again.")
         database.save_projects([
             {"name": p.name, "path": str(p.path), "sync_enabled": p.sync_enabled} for p in projects])
 
@@ -68,14 +70,16 @@ def resolve_todo(path: Path) -> Path:
 def register(path: Path, name: str | None = None) -> Project:
     todo = resolve_todo(path)
     project = Project(name or todo.parent.name, todo)
-    save_config([p for p in load_config() if p.path != todo] + [project])
+    revision = Database().revision()
+    save_config([p for p in load_config() if p.path != todo] + [project], expected_revision=revision)
     return project
 
 
 def unregister(path: Path) -> None:
     path = path.expanduser().resolve()
     target = path if path.suffix.lower() == ".md" else path / "TODO.md"
-    save_config([p for p in load_config() if p.path != target])
+    revision = Database().revision()
+    save_config([p for p in load_config() if p.path != target], expected_revision=revision)
 
 
 def find_local(cwd: Path) -> Path | None:

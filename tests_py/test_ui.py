@@ -108,7 +108,7 @@ async def test_sync_on_launch_when_configured(workspace, monkeypatch, tmp_path):
     app = TodoApp(local=file, registry=config)
     async with app.run_test(size=(60, 12)) as pilot:
         await pilot.pause(0.6)
-        assert "create" in app.message
+        assert "sent" in app.message
         assert [t["title"] for t in fake.tasks] == ["Main task", "Active"]
         assert "<!-- todox:id=" in file.read_text()
 
@@ -141,13 +141,13 @@ async def test_sync_from_the_tui_reports_and_resolves_conflicts(workspace, monke
     async with app.run_test(size=(60, 14)) as pilot:
         await pilot.press("Y")
         await pilot.pause(0.5)
-        assert "create" in app.message and "<!-- todox:id=" in file.read_text()
+        assert "sent" in app.message and "<!-- todox:id=" in file.read_text()
         fake.tasks[0]["title"] = "Remote rename"
         file.write_text(file.read_text().replace("Main task", "Local rename"))
         await pilot.press("Y")
         await pilot.pause(0.5)
         assert app.page == "conflicts" and len(app.rows) == 1
-        assert "1 keep local" in str(app.query_one("#footer").render())
+        assert "1 keep TODO.md" in str(app.query_one("#footer").render())
         await pilot.press("2")
         await pilot.pause(0.5)
         assert app.page == "detail" and "Remote rename" in file.read_text()

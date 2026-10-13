@@ -24,7 +24,10 @@ Transport = Callable[[str, str, dict[str, str], bytes | None], tuple[int, bytes]
 
 
 class TickTickError(ValueError):
-    """A non-retryable API or credential failure."""
+    """An API/transport failure; rejected distinguishes definite rejection from uncertainty."""
+    def __init__(self, message: str, *, rejected: bool = False):
+        super().__init__(message)
+        self.rejected = rejected
 
 
 def token_path() -> Path:
@@ -98,11 +101,12 @@ class TickTick:
         status, raw = self.transport(method, API + path, headers, body)
         text = raw.decode("utf-8", "replace")
         if status in {401, 403}:
-            raise TickTickError("TickTick rejected the token. Create a new one in Settings > Account > API Token.")
+            raise TickTickError("TickTick rejected the token. Create a new one in Settings > Account > API Token.", rejected=True)
         if status == 404:
             return None
         if status >= 400:
-            raise TickTickError(f"TickTick {method} {path} failed ({status}): {text.strip()[:200]}")
+            rejected = 400 <= status < 500 or '"project_task_limit_exceeded"' in text
+            raise TickTickError(f"TickTick {method} {path} failed ({status}): {text.strip()[:200]}", rejected=rejected)
         return json.loads(text) if text.strip() else None
 
     def projects(self) -> list[dict[str, Any]]:
@@ -172,6 +176,9 @@ class TickTick:
 
     def create_task(self, payload: dict[str, Any]) -> dict[str, Any]:
         return self._call("POST", "/open/v1/task", payload) or {}
+
+    def task(self, project_id: str, task_id: str) -> dict[str, Any] | None:
+        return self._call("GET", f"/open/v1/project/{project_id}/task/{task_id}")
 
     def update_task(self, task_id: str, payload: dict[str, Any]) -> dict[str, Any]:
         return self._call("POST", f"/open/v1/task/{task_id}", payload) or {}

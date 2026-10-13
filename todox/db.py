@@ -120,6 +120,8 @@ class Database:
                 con.execute("INSERT OR IGNORE INTO profiles(registry_key) VALUES (?)", (self.key,))
             elif version != VERSION:
                 raise ValueError(f"Database has no supported schema: {self.path}")
+            else:
+                con.execute("BEGIN")  # All queries in this reader see one consistent snapshot.
             yield con
             if write:
                 con.commit()

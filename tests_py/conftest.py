@@ -1,5 +1,7 @@
 """Shared fixtures: a fake TickTick backend and a registered project."""
 import json
+from copy import deepcopy
+from dataclasses import asdict
 from pathlib import Path
 
 import pytest
@@ -24,10 +26,30 @@ def no_auto_sync(monkeypatch, tmp_path):
         raise AssertionError("Tests must use FakeTickTick, never the real network")
 
     monkeypatch.setattr("urllib.request.urlopen", blocked)
+    from todox.ui import TodoApp
+    from todox.sync import Sync
+    from todox.projects import load_config
+    original = TodoApp._run_background
+
+    async def fake_aware(self, client, announce, uid="", keep=""):
+        # In-memory transport doubles stay in the test process. Production
+        # clients always exercise the real owned subprocess implementation.
+        if getattr(client, "_in_memory", False):
+            if keep:
+                engine = Sync(client, registry=self.registry)
+                change = engine.resolve(load_projects(load_config(self.registry)), uid, keep)
+                return {"change": asdict(change)}
+            engine, plan = self._sync_blocking(client, announce)
+            return {"plan": asdict(plan), "applied": engine.applied}
+        return await original(self, client, announce, uid, keep)
+
+    monkeypatch.setattr(TodoApp, "_run_background", fake_aware)
 
 
 class FakeTickTick(TickTick):
     """In-memory stand-in for the documented endpoints."""
+
+    _in_memory = True
 
     def __init__(self) -> None:
         super().__init__(token="test-token")
@@ -42,7 +64,7 @@ class FakeTickTick(TickTick):
     def _call(self, method, path, payload=None):
         self.calls.append((method, path, payload))
         if path in self.fail_paths:
-            raise TickTickError(f"simulated failure for {path}")
+            raise TickTickError(f"simulated failure for {path}", rejected=True)
         if path == "/open/v1/project" and method == "GET":
             return self.projects_list
         if path == "/open/v1/project" and method == "POST":
@@ -55,16 +77,16 @@ class FakeTickTick(TickTick):
             self.tags_list.append({"name": payload["name"], "label": payload["label"]})
             return payload
         if path == "/open/v1/task/completed":
-            return [t for t in self.tasks if t.get("status") == 2
-                    and t.get("projectId", "list1") in payload["projectIds"]]
+            return deepcopy([t for t in self.tasks if t.get("status") == 2
+                             and t.get("projectId", "list1") in payload["projectIds"]])
         if path == "/open/v1/task/filter":
-            return [dict(t, projectId=t.get("projectId", "list1")) for t in self.tasks
-                    if set(payload["tag"]).issubset({str(tag).lower() for tag in t.get("tags", [])})][:200]
+            return deepcopy([dict(t, projectId=t.get("projectId", "list1")) for t in self.tasks
+                             if set(payload["tag"]).issubset({str(tag).lower() for tag in t.get("tags", [])})][:200])
         if path.endswith("/data"):
             # TickTick's project endpoint only reports open tasks.
             project_id = path.split("/")[-2]
-            return {"tasks": [t for t in self.tasks if t.get("status") != 2
-                              and t.get("projectId", "list1") == project_id]}
+            return {"tasks": deepcopy([t for t in self.tasks if t.get("status") != 2
+                                       and t.get("projectId", "list1") == project_id])}
         if path == "/open/v1/task" and method == "POST":
             task = {"id": f"r{self.next_id}", "title": payload["title"], "projectId": payload["projectId"],
                     "status": int(payload.get("status", 0)), "tags": list(payload.get("tags") or []), "completedTime": ""}
@@ -88,6 +110,9 @@ class FakeTickTick(TickTick):
             task["status"] = 2
             task["completedTime"] = "2026-10-12T09:00:00+0000"
             return None
+        if method == "GET" and "/task/" in path:
+            project_id, task_id = path.split("/")[-3], path.split("/")[-1]
+            return next((dict(t) for t in self.tasks if t["id"] == task_id and t.get("projectId", "list1") == project_id), None)
         if method == "DELETE":
             task_id = path.split("/")[-1]
             task = next(t for t in self.tasks if t["id"] == task_id)

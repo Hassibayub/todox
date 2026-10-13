@@ -175,7 +175,7 @@ def test_successful_upload_survives_later_failure(workspace, fake):
 
     def fail_second(method, path, payload=None):
         if path == "/open/v1/task" and len(fake.tasks) == 1:
-            raise TickTickError("second upload failed")
+            raise TickTickError("second upload failed", rejected=True)
         return call(method, path, payload)
 
     fake._call = fail_second
