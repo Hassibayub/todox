@@ -102,6 +102,7 @@ class TodoApp(App[None]):
         self.search_query = ""
         self.prompt_kind: str | None = None
         self.prompt_row: Row | None = None
+        self.pending_delete: Row | None = None
         self.conflicts: list[Change] = []
         self.sync_running = False
         self._engine: Sync | None = None
@@ -190,7 +191,7 @@ class TodoApp(App[None]):
         if self.size.width < 42:
             common = ["j/k, ↑↓  Move", "Enter  Open / edit", "n  New task", "e  Edit task",
                       "Space, 1–3  Status", "u  Toggle completed", "d  Toggle dates", "w  Wrap text",
-                      "s  New section", "x  Delete task", "Backspace  Remove section",
+                      "s  New section", "x  Delete task (then y)", "Backspace  Remove section (then y)",
                       "/  Search", "o  Neovim", "y  Copy task", "Y  Sync TickTick", "r  Refresh", "Esc  Back · clear status", "q  Quit"]
             if not self.local:
                 common[2:2] = ["p/t  Projects / tasks", "c  Copy path"]
@@ -199,7 +200,7 @@ class TodoApp(App[None]):
                   "n             New task (selected section)", "e             Edit task",
                   "Space, 1–3    Change status", "u             Show / hide completed",
                   "d             Show / hide dates", "w             Wrap / clip long rows", "s             Add ## section",
-                  "x             Delete task (confirm)", "Backspace     Remove empty section",
+                  "x             Delete task (then y)", "Backspace     Remove empty section (then y)",
                   "o             Open task in Neovim", "/             Search; Esc clears",
                   "y             Copy selected task", "Y             Sync with TickTick",
                   "r             Refresh TODO.md", "? / Esc       Close help · clear status", "q             Quit"]
@@ -271,6 +272,9 @@ class TodoApp(App[None]):
         if event.list_view.id != "items":
             return
         self.selected_index = event.list_view.index or 0
+        if self.pending_delete is not None:
+            self.pending_delete = None
+            self.message = ""
         self._paint_selection()
 
     async def draw(self, preserve: bool = False) -> None:
@@ -502,8 +506,7 @@ class TodoApp(App[None]):
         self.prompt_row = row
         prompt = self.query_one("#prompt", Input)
         prompt.placeholder = {"add": "New task · Enter saves", "edit": "Edit task · Enter saves",
-                              "section": "New section · Enter saves", "search": "Search tasks",
-                              "delete": "Type DELETE to confirm", "remove-section": "Type DELETE to remove empty section"}[kind]
+                              "section": "New section · Enter saves", "search": "Search tasks"}[kind]
         prompt.value = value
         prompt.display = True
         self.query_one("#footer", Static).display = False
@@ -534,12 +537,62 @@ class TodoApp(App[None]):
     def action_delete_task(self) -> None:
         row = self._selected()
         if self.page == "detail" and row and row.task and not self.prompt_kind:
-            self._open_prompt("delete", row)
+            self._arm_delete(row, f'Delete "{row.task.text}"?')
 
     def action_remove_section(self) -> None:
         row = self._selected()
         if self.page == "detail" and row and row.section and not self.prompt_kind:
-            self._open_prompt("remove-section", row)
+            self._arm_delete(row, f'Remove section "{row.section.title}"?')
+
+    def _arm_delete(self, row: Row, question: str) -> None:
+        self.pending_delete = row
+        self.message = f"{question}  y confirm · n cancel"
+        self._update_chrome()
+
+    @staticmethod
+    def _locate(doc: Document, task: Task) -> Task | None:
+        """Find the same task again after any refresh; never trust a bare line number."""
+        if task.uid:
+            match = next((t for t in doc.tasks if t.uid == task.uid), None)
+            if match:
+                return match
+        matches = [t for t in doc.tasks if t.text == task.text and t.status == task.status]
+        if len(matches) == 1:
+            return matches[0]
+        return next((t for t in doc.tasks if t.line == task.line and t.text == task.text), None)
+
+    async def _confirm_pending_delete(self) -> None:
+        row = self.pending_delete
+        self.pending_delete = None
+        if row is None:
+            return
+        project = self._project()
+        if not project or not project.doc:
+            self.message = "Project changed · nothing deleted"
+            self._update_chrome()
+            return
+        try:
+            if row.task:
+                task = self._locate(project.doc, row.task)
+                if task is None:
+                    raise ValueError("Task changed · refresh before deleting")
+                updated = save(project.doc, "delete", line=task.line)
+                done = f'Deleted "{task.text}"'
+            elif row.section:
+                section = next((s for s in project.doc.sections if s.line >= 0 and s.title == row.section.title), None)
+                if section is None:
+                    raise ValueError("Section changed · refresh before removing")
+                updated = save(project.doc, "remove-section", section=section.line)
+                done = f'Removed section "{section.title}"'
+            else:
+                return
+        except (OSError, ValueError) as exc:
+            self.message = str(exc)
+            self._update_chrome()
+            return
+        self._replace_doc(project.path, updated)
+        self.message = f"{done} · Saved to TODO.md"
+        await self.draw(preserve=True)
 
     async def action_open_editor(self) -> None:
         row = self._selected()
@@ -562,10 +615,6 @@ class TodoApp(App[None]):
         kind = self.prompt_kind
         row = self.prompt_row
         value = event.value.strip()
-        if kind in {"delete", "remove-section"} and value != "DELETE":
-            self.message = "Deletion cancelled"
-            self._close_prompt()
-            return
         if kind == "search":
             self.search_query = value
             self.message = ""
@@ -576,7 +625,7 @@ class TodoApp(App[None]):
         if not kind or not project or not project.doc:
             self._close_prompt()
             return
-        if kind not in {"delete", "remove-section"} and not value:
+        if not value:
             self.message = "Enter a non-empty name"
             self._update_chrome()
             return
@@ -586,12 +635,8 @@ class TodoApp(App[None]):
                 updated = save(project.doc, "add", section=section, value=value)
             elif kind == "edit":
                 updated = save(project.doc, "edit", line=row.task.line, value=value)
-            elif kind == "section":
-                updated = save(project.doc, "add-section", value=value)
-            elif kind == "remove-section":
-                updated = save(project.doc, "remove-section", section=row.section.line)
             else:
-                updated = save(project.doc, "delete", line=row.task.line)
+                updated = save(project.doc, "add-section", value=value)
         except (OSError, ValueError) as exc:
             self.message = str(exc)
             self._update_chrome()
@@ -770,6 +815,22 @@ class TodoApp(App[None]):
     async def on_key(self, event) -> None:
         if self.prompt_kind:
             return
+        if self.pending_delete is not None:
+            key = event.key.lower()
+            if key == "y":
+                event.prevent_default()
+                event.stop()
+                await self._confirm_pending_delete()
+                return
+            self.pending_delete = None
+            if key in {"n", "escape"}:
+                event.prevent_default()
+                event.stop()
+                self.message = "Deletion cancelled"
+                self._update_chrome()
+                return
+            self.message = ""
+            self._update_chrome()
         listing = self.query_one("#items", ListView)
         if event.key == "j":
             listing.action_cursor_down()

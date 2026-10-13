@@ -76,7 +76,7 @@ A normal `todo` invocation opens the local file if one exists; from that screen 
 | `d` | Hide or show completion dates in the UI |
 | `w` | Wrap long rows, or clip them to one line with `…` |
 | `s` | Add a `##` section |
-| `x`, `Backspace` | Delete a task or remove an empty section (confirmation required) |
+| `x`, `Backspace` | Delete a task or remove an empty section; press `y` to confirm, any other key cancels |
 | `/`, `Esc` | Search; clear search, dismiss the status line, or return from a global project |
 | `o` | Open selected task in Neovim |
 | `y` | Copy the selected task text (section name or project path on those rows) |

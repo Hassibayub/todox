@@ -9,6 +9,7 @@ The distribution is named `todox-tui` (the PyPI name `todox` belongs to an unrel
 - Open local tasks immediately and sync in an owned background process. Quit stops and reaps it promptly instead of waiting for a network thread; interrupted uploads retain their journal records. View changes and display workers no longer cancel sync.
 - Short, plain-language sync output by default; hide normal skips and internal paths, summarize optional cleanup once, show actual changes and actionable review items. `--verbose` retains the detailed report; JSON output stays compatible.
 - Keep conflict-resolution failures visible and run resolution in the background, without blocking keyboard navigation or quitting.
+- Delete tasks and remove sections with `x`/`Backspace` then a single `y`; no need to type DELETE. Any other key cancels and keeps its normal meaning.
 
 - Audit fixes: preserve edits made during upload, reject stale local/remote writes and retirement, retain remote-only metadata, handle mixed-case tags consistently, and keep failed TUI resolutions visible. Read-only previews cannot execute conflict resolution; uncertain server errors cannot blindly repeat creation.
 

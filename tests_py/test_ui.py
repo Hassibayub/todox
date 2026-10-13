@@ -186,10 +186,66 @@ async def test_help_section_delete_and_tiny_layout(workspace):
         assert app.rows[-1].section.title == "More"
         app.query_one("#items").index = 0
         await pilot.press("x")
-        assert app.prompt_kind == "delete"
-        await pilot.press(*"DELETE", "enter")
+        assert "y confirm" in app.message
+        await pilot.press("y")
+        await pilot.pause()
         assert "Main task" not in file.read_text()
         assert app.page == "detail"
+
+
+@pytest.mark.asyncio
+async def test_x_then_y_deletes_and_anything_else_cancels(workspace):
+    file, config = workspace
+    app = TodoApp(local=file, registry=config)
+    async with app.run_test(size=(60, 14)) as pilot:
+        app.query_one("#items").index = 0
+        # Any key other than y cancels the delete and keeps its own meaning.
+        await pilot.press("x")
+        assert app.pending_delete is not None and "y confirm" in app.message
+        await pilot.press("j")
+        assert app.pending_delete is None and "Main task" in file.read_text()
+        # Esc and n cancel without deleting.
+        app.query_one("#items").index = 0
+        await pilot.pause()
+        await pilot.press("x", "escape")
+        assert app.pending_delete is None and "Main task" in file.read_text()
+        assert app.message == "Deletion cancelled"
+        app.query_one("#items").index = 0
+        await pilot.pause()
+        await pilot.press("x", "n")
+        assert app.pending_delete is None and "Main task" in file.read_text()
+        # Moving the highlight cancels a pending delete too.
+        app.query_one("#items").index = 0
+        await pilot.pause()
+        await pilot.press("x", "down")
+        assert app.pending_delete is None and "Main task" in file.read_text()
+        # y confirms.
+        app.query_one("#items").index = 0
+        await pilot.pause()
+        await pilot.press("x", "y")
+        await pilot.pause()
+        assert app.pending_delete is None
+        assert "Main task" not in file.read_text()
+        assert "Deleted" in app.message
+
+
+@pytest.mark.asyncio
+async def test_backspace_then_y_removes_an_empty_section(workspace):
+    file, config = workspace
+    app = TodoApp(local=file, registry=config)
+    async with app.run_test(size=(60, 14)) as pilot:
+        await pilot.press("s")
+        await pilot.press(*"Empty", "enter")
+        assert "## Empty" in file.read_text()
+        index = next(i for i, row in enumerate(app.rows) if row.section and row.section.title == "Empty")
+        app.query_one("#items").index = index
+        await pilot.pause()
+        await pilot.press("backspace")
+        assert app.pending_delete is not None and "Remove section" in app.message
+        await pilot.press("Y")
+        await pilot.pause()
+        assert "## Empty" not in file.read_text()
+        assert "Removed section" in app.message
 
 
 @pytest.mark.asyncio
