@@ -6,6 +6,17 @@ The distribution is named `todox-tui` (the PyPI name `todox` belongs to an unrel
 
 ## Unreleased
 
+- SQLite-backed project registry and sync mappings, with read-only legacy JSON fallback, atomic migration, private snapshots and consistent database backups. Markdown remains the editable local task source.
+- Durable sync-run/operation history, recoverable interrupted imports, unknown-upload retry protection, field-level baseline snapshots and safe independent text/status merging.
+- Sync project tags across Inbox and all accessible TickTick lists, retain actual remote list ids, and pause removed or ambiguous project tags. Capped discovery stops rather than implying deletion.
+- Local status/history/recovery/doctor commands, JSON export, and per-project local-only/sync controls.
+
+- Active-only first uploads: completed local history stays local. Approved completed-copy cleanup retains local-only sync records, and reopened tasks restore their remote copy.
+- First launch previews rather than writing after the active-only upgrade; the first manual sync backs up local files and state. Custom registries require explicit auto-sync opt-in.
+- Read-only previews no longer create lists. JSON output includes per-project counts and remote ids; `--cleanup-temp` previews tracked temporary-workspace pollution without deleting untracked tasks.
+- Preserve personal tags, block duplicate ids and ambiguous project tags, pause duplicate-title imports, protect unreadable files, checkpoint writes, and reject overlapping/stale writers.
+- Isolate test credentials, registry, and state, and block real network access in tests.
+
 - `Esc` now dismisses the status line (`Dates visible`, `Task copied`, `Sync failed · …`), so the key hints come back. On a local project screen `Esc` had nothing else to do and a status message stayed on screen until another action replaced it.
 - Rows use the full terminal width instead of a centered 100-cell column, and a wrapped row's continuation lines line up under its own text instead of starting at the left edge. The wrap is structural: the checkbox is its own column and the text wraps beside it.
 - `w` switches long rows between wrapping and one-line clipping, ending in `…`; `TODOX_WRAP=0` starts clipped. Section titles and the global task list follow the same setting.

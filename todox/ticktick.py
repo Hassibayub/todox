@@ -131,6 +131,8 @@ class TickTick:
             chunk = self._call("POST", "/open/v1/task/completed", {
                 "projectIds": [project_id], "startDate": f"{year}-01-01T00:00:00+0000",
                 "endDate": f"{year}-12-31T23:59:59+0000"}) or []
+            if len(chunk) >= 200:
+                raise TickTickError("Completed-task discovery reached the yearly result limit; sync stopped to avoid incomplete data.")
             for task in chunk:
                 if isinstance(task, dict) and task.get("id"):
                     found[str(task["id"])] = task
@@ -138,10 +140,34 @@ class TickTick:
 
     def project_tasks(self, project_id: str) -> list[dict[str, Any]]:
         """Every task in a list: open ones plus the completed ones kept elsewhere."""
-        data = self._call("GET", f"/open/v1/project/{project_id}/data") or {}
+        data = self._call("GET", f"/open/v1/project/{project_id}/data")
+        if not isinstance(data, dict):
+            raise TickTickError(f"Cannot read linked TickTick list {project_id}; sync stopped without inferring deletions.")
         found = {str(t["id"]): t for t in (data.get("tasks") or []) if isinstance(t, dict) and t.get("id")}
         for task in self.completed_tasks(project_id):
             found.setdefault(str(task["id"]), task)
+        return [dict(task, projectId=task.get("projectId") or project_id) for task in found.values()]
+
+    def tagged_tasks(self, tags: list[str]) -> list[dict[str, Any]]:
+        """Search each project tag account-wide, including Inbox and completed tasks.
+
+        TickTick combines multiple tags with AND, so query them separately.
+        The filter endpoint caps results at 200: fail closed rather than use
+        an incomplete snapshot to reconcile or delete tasks.
+        """
+        found: dict[str, dict[str, Any]] = {}
+        for tag in sorted(set(tags)):
+            tasks = self._call("POST", "/open/v1/task/filter", {"tag": [tag]})
+            if not isinstance(tasks, list):
+                raise TickTickError("TickTick tag discovery failed; sync stopped without applying changes.")
+            if len(tasks) >= 200:
+                raise TickTickError(f"Tag {tag!r} reached TickTick's 200-task search limit; sync stopped to avoid incomplete data.")
+            for task in tasks:
+                if not isinstance(task, dict) or not task.get("id"):
+                    continue
+                if not task.get("projectId"):
+                    raise TickTickError("TickTick returned a tagged task without its list id; sync stopped.")
+                found[str(task["id"])] = task
         return list(found.values())
 
     def create_task(self, payload: dict[str, Any]) -> dict[str, Any]:
@@ -156,16 +182,18 @@ class TickTick:
     def delete_task(self, project_id: str, task_id: str) -> None:
         self._call("DELETE", f"/open/v1/project/{project_id}/task/{task_id}")
 
+    def find_list(self, list_id: str = "") -> tuple[str, str]:
+        """Find the dedicated list without creating anything (safe for previews)."""
+        projects = self.projects()
+        match = next((p for p in projects if list_id and p.get("id") == list_id), None)
+        match = match or next((p for p in projects if p.get("name") == LIST_NAME and p.get("kind") == "TASK"), None)
+        return (str(match["id"]), str(match.get("name", LIST_NAME))) if match else ("", LIST_NAME)
+
     def ensure_list(self, list_id: str = "") -> tuple[str, str]:
         """Return (list id, list name), creating the dedicated list when absent."""
-        projects = self.projects()
-        if list_id:
-            match = next((p for p in projects if p.get("id") == list_id), None)
-            if match:
-                return match["id"], str(match.get("name", LIST_NAME))
-        match = next((p for p in projects if p.get("name") == LIST_NAME and p.get("kind") == "TASK"), None)
-        if match:
-            return match["id"], str(match.get("name", LIST_NAME))
+        found = self.find_list(list_id)
+        if found[0]:
+            return found
         created = self.create_project(LIST_NAME)
         if not created.get("id"):
             raise TickTickError("TickTick did not return an id for the new TODO.md list.")

@@ -8,6 +8,7 @@ import sys
 
 from .projects import find_local, load_config, load_projects, register, resolve_todo, unregister
 from .store import counts
+from .db import Database
 
 
 def current_version() -> str:
@@ -27,8 +28,16 @@ HELP = """todo — Markdown tasks in your terminal
   todo remove-project [path]   Unregister without deleting the file
   todo scan [directory]        Register immediate child projects
   todo projects                List registered files
+  todo project NAME --local-only | --sync  Control project syncing
   todo stats [--json]          Task counts for scripts
   todo sync                    Two-way TickTick sync (--dry-run, --json)
+  todo sync status             Local sync status (no network)
+  todo sync history            Recent runs (no network)
+  todo sync recover            Recover interrupted bookkeeping (no remote writes)
+  todo db migrate              Back up and migrate JSON bookkeeping to SQLite
+  todo db backup               Create a consistent SQLite backup
+  todo db export               Export registry and sync mappings as JSON
+  todo doctor                  Check database and registered local files
   todo ticktick login [token]  Store a personal TickTick API token
   todo ticktick status         Show token and TODO.md list state
   todo --help                  Show this help
@@ -68,6 +77,47 @@ def run(args: list[str] | None = None, cwd: Path | None = None) -> int:
                 found += 1
         print(f"{found} project(s) registered.")
         return 0
+    if command == "project" and len(args) == 3 and args[2] in {"--local-only", "--sync"}:
+        from dataclasses import replace
+        from .projects import save_config
+        projects = load_config()
+        matches = [p for p in projects if p.name.casefold() == args[1].casefold()]
+        if len(matches) != 1:
+            raise ValueError("Choose exactly one registered project name from todo projects.")
+        selected = matches[0]
+        enabled = args[2] == "--sync"
+        save_config([replace(p, sync_enabled=enabled) if p.path == selected.path else p for p in projects])
+        print(f'{selected.name}: {"sync enabled" if enabled else "local-only"}; no remote tasks changed')
+        return 0
+    if command == "db" and len(args) == 2:
+        from datetime import datetime, timezone
+        from .sync import State, Sync
+        from .ticktick import TickTick
+        database = Database()
+        if args[1] == "migrate":
+            print(json.dumps(Sync(TickTick("")).migrate(), indent=2))
+            return 0
+        if args[1] == "backup":
+            if not database.path.exists():
+                raise ValueError("No database yet. Run todo db migrate first.")
+            destination = database.path.parent / "backups" / ("database-" + datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ") + ".sqlite3")
+            print(database.backup(destination))
+            return 0
+        if args[1] == "export":
+            print(json.dumps({"projects": [{"name": p.name, "path": str(p.path), "syncEnabled": p.sync_enabled} for p in load_config()],
+                              "sync": State.load().payload()}, indent=2))
+            return 0
+        raise ValueError("Usage: todo db migrate | backup | export")
+    if command == "doctor" and len(args) == 1:
+        database = Database()
+        result = database.status()
+        if database.path.exists():
+            with database.connection() as con:
+                result["integrity"] = con.execute("PRAGMA quick_check").fetchone()[0]
+                result["foreignKeyErrors"] = len(con.execute("PRAGMA foreign_key_check").fetchall())
+        result["fileErrors"] = [{"project": p.name, "error": p.error} for p in load_projects(load_config()) if p.error]
+        print(json.dumps(result, indent=2))
+        return 1 if result["fileErrors"] or result.get("foreignKeyErrors") or result.get("integrity", "ok") != "ok" else 0
     if command == "ticktick" and 1 < len(args) <= 3:
         from .sync import state_path
         from .ticktick import Auth, LIST_NAME, TickTick
@@ -93,11 +143,20 @@ def run(args: list[str] | None = None, cwd: Path | None = None) -> int:
                 print(f"Token present · no {LIST_NAME} list yet; the first sync creates it · state {state_path()}")
             return 0
         raise ValueError("Usage: todo ticktick login [token] | todo ticktick status")
-    if command == "sync" and 1 <= len(args) <= 4:
+    if command == "sync":
         from .sync import Sync
         from .ticktick import Auth, TickTick
+        if args[1:] in [["status"], ["history"], ["recover"]]:
+            database = Database()
+            if args[1] == "recover":
+                report = Sync(TickTick("")).recover()
+                print(json.dumps(report, indent=2))
+                return 1 if any(item["status"] == "needs-review" for item in report) else 0
+            status = database.status()
+            print(json.dumps(status.get("runs", []) if args[1] == "history" else status, indent=2))
+            return 0
         flags = args[1:]
-        known = {"--dry-run", "--json", "--allow-deletes"}
+        known = {"--dry-run", "--json", "--allow-deletes", "--cleanup-temp"}
         keep, keep_uid = "", ""
         rest: list[str] = []
         index = 0
@@ -118,21 +177,22 @@ def run(args: list[str] | None = None, cwd: Path | None = None) -> int:
         projects = load_projects(load_config())
         if keep_uid:
             change = engine.resolve(projects, keep_uid, keep)
-            print(f"Kept {keep} for {keep_uid}: {change.text or change.reason}")
-            return 0
-        plan = engine.plan(projects, allow_deletes="--allow-deletes" in rest)
+            print(f"Failed: {change.error}" if change.error else f"Kept {keep} for {keep_uid}: {change.text or change.reason}")
+            return 1 if change.error else 0
+        plan = engine.plan(projects, allow_deletes="--allow-deletes" in rest, cleanup_temp="--cleanup-temp" in rest)
         if "--dry-run" not in rest:
             engine.apply(plan)
         if "--json" in rest:
-            print(json.dumps({"list": plan.list_name, "dryRun": "--dry-run" in rest, "changes": [
-                {"action": c.action, "uid": c.uid, "text": c.text, "project": c.name or c.project,
+            print(json.dumps({"list": plan.list_name, "dryRun": "--dry-run" in rest,
+                              "summary": plan.summary(), "byProject": plan.project_summary(), "changes": [
+                 {"action": c.action, "uid": c.uid, "remoteId": c.remote_id, "text": c.text, "project": c.name or c.project,
                  "reason": c.reason, "error": c.error} for c in plan.changes]}, indent=2))
         else:
             print("\n".join(plan.describe()))
             tally = plan.summary()
             print("Dry run · " if "--dry-run" in rest else "Synced · ", end="")
             print(", ".join(f"{count} {name}" for name, count in sorted(tally.items())) if tally else "already in sync")
-        return 0
+        return 1 if any(c.error for c in plan.changes) else 0
     if args and args[0] in {"sync", "ticktick"}:
         raise ValueError("Unknown arguments. Run todo --help.")
     if command == "projects" and len(args) == 1:
@@ -151,8 +211,14 @@ def run(args: list[str] | None = None, cwd: Path | None = None) -> int:
     if not sys.stdin.isatty() or not sys.stdout.isatty():
         raise ValueError("The TUI needs an interactive terminal. Use todo stats --json for scripts.")
     local = None if command == "--global" else resolve_todo(cwd / args[1]) if command == "--file" else find_local(cwd)
-    if local and not any(p.path == local for p in load_config()):
-        register(local)
+    if local:
+        try:
+            if not any(p.path == local for p in load_config()):
+                register(local)
+        except (OSError, ValueError):
+            # A broken registry must not prevent opening a user's Markdown.
+            # TodoApp reports the registry error and still displays this file.
+            pass
     from .ui import TodoApp
     TodoApp(local=local).run()
     return 0

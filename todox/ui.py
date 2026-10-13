@@ -143,6 +143,10 @@ class TodoApp(App[None]):
 
     @property
     def auto_sync_enabled(self) -> bool:
+        # A custom registry is commonly a test/demo workspace, not permission
+        # to use the user's saved credentials and shared sync state.
+        if (self.registry is not None or os.environ.get("TODOX_CONFIG")) and "TODOX_AUTO_SYNC" not in os.environ:
+            return False
         return os.environ.get("TODOX_AUTO_SYNC", "1").strip().lower() not in {"0", "false", "off", "no"}
 
     async def auto_sync(self) -> None:
@@ -633,11 +637,12 @@ class TodoApp(App[None]):
             return
         self.run_worker(self._sync(client, announce=True), exclusive=True)
 
-    def _sync_blocking(self, client: TickTick) -> tuple[Sync, object]:
-        engine = Sync(client)
+    def _sync_blocking(self, client: TickTick, announce: bool = True) -> tuple[Sync, object]:
+        engine = Sync(client, registry=self.registry)
         projects = load_projects(load_config(self.registry))
         plan = engine.plan(projects)
-        engine.apply(plan)
+        if announce or (engine.state.active_only and engine.database.load_state() is not None):
+            engine.apply(plan)
         return engine, plan
 
     async def _sync(self, client: TickTick, announce: bool) -> None:
@@ -648,7 +653,7 @@ class TodoApp(App[None]):
             self.message = "Syncing with TickTick…"
             self._update_chrome()
         try:
-            engine, plan = await to_thread(self._sync_blocking, client)
+            engine, plan = await to_thread(self._sync_blocking, client, announce)
         except (OSError, ValueError, TickTickError) as exc:
             self.sync_running = False
             self.message = f"Sync failed · {exc}"
@@ -657,6 +662,10 @@ class TodoApp(App[None]):
         self.sync_running = False
         self._engine = engine
         self._reload_data()
+        if not announce and not engine.applied:
+            self.message = "Sync preview required · run todo sync --dry-run before the first active-only sync"
+            await self.draw()
+            return
         tally = plan.summary()
         failures = [change for change in plan.changes if change.error]
         self.conflicts = [change for change in plan.changes if change.action == "conflict"]

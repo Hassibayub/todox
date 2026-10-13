@@ -11,9 +11,19 @@ TODO = "# TODO\n- [ ] Alpha\n## Work\n- [/] Beta\n- [x] Done (completed: 2026-10
 
 
 @pytest.fixture(autouse=True)
-def no_auto_sync(monkeypatch):
+def no_auto_sync(monkeypatch, tmp_path):
     """Tests drive sync explicitly; launch sync would double-run and hit the network."""
     monkeypatch.setenv("TODOX_AUTO_SYNC", "0")
+    monkeypatch.delenv("TODOX_DB", raising=False)
+    monkeypatch.delenv("TODOX_TICKTICK_TOKEN", raising=False)
+    monkeypatch.setenv("TODOX_TICKTICK_CONFIG", str(tmp_path / "credentials.json"))
+    monkeypatch.setenv("TODOX_SYNC_STATE", str(tmp_path / "isolated-sync.json"))
+    monkeypatch.setenv("TODOX_CONFIG", str(tmp_path / "isolated-projects.json"))
+
+    def blocked(*args, **kwargs):
+        raise AssertionError("Tests must use FakeTickTick, never the real network")
+
+    monkeypatch.setattr("urllib.request.urlopen", blocked)
 
 
 class FakeTickTick(TickTick):
@@ -26,8 +36,11 @@ class FakeTickTick(TickTick):
         self.tasks: list[dict] = []
         self.deleted: list[str] = []
         self.fail_paths: set[str] = set()
+        self.next_id = 1
+        self.calls: list[tuple] = []
 
     def _call(self, method, path, payload=None):
+        self.calls.append((method, path, payload))
         if path in self.fail_paths:
             raise TickTickError(f"simulated failure for {path}")
         if path == "/open/v1/project" and method == "GET":
@@ -42,17 +55,25 @@ class FakeTickTick(TickTick):
             self.tags_list.append({"name": payload["name"], "label": payload["label"]})
             return payload
         if path == "/open/v1/task/completed":
-            return [t for t in self.tasks if t.get("status") == 2]
+            return [t for t in self.tasks if t.get("status") == 2
+                    and t.get("projectId", "list1") in payload["projectIds"]]
+        if path == "/open/v1/task/filter":
+            return [dict(t, projectId=t.get("projectId", "list1")) for t in self.tasks
+                    if set(payload["tag"]).issubset({str(tag).lower() for tag in t.get("tags", [])})][:200]
         if path.endswith("/data"):
             # TickTick's project endpoint only reports open tasks.
-            return {"tasks": [t for t in self.tasks if t.get("status") != 2]}
+            project_id = path.split("/")[-2]
+            return {"tasks": [t for t in self.tasks if t.get("status") != 2
+                              and t.get("projectId", "list1") == project_id]}
         if path == "/open/v1/task" and method == "POST":
-            task = {"id": f"r{len(self.tasks) + 1}", "title": payload["title"], "projectId": payload["projectId"],
+            task = {"id": f"r{self.next_id}", "title": payload["title"], "projectId": payload["projectId"],
                     "status": int(payload.get("status", 0)), "tags": list(payload.get("tags") or []), "completedTime": ""}
             self.tasks.append(task)
+            self.next_id += 1
             return task
         if path.startswith("/open/v1/task/") and method == "POST":
             task = next(t for t in self.tasks if t["id"] == payload["id"])
+            assert payload["projectId"] == task.get("projectId", "list1"), "sync must not move tasks between lists"
             task["title"] = payload.get("title", task["title"])
             task["tags"] = list(payload.get("tags") or [])
             if payload.get("status") is not None:
@@ -63,11 +84,14 @@ class FakeTickTick(TickTick):
         if path.endswith("/complete"):
             task_id = path.split("/")[-2]
             task = next(t for t in self.tasks if t["id"] == task_id)
+            assert path.split("/")[-4] == task.get("projectId", "list1")
             task["status"] = 2
             task["completedTime"] = "2026-10-12T09:00:00+0000"
             return None
         if method == "DELETE":
             task_id = path.split("/")[-1]
+            task = next(t for t in self.tasks if t["id"] == task_id)
+            assert path.split("/")[-3] == task.get("projectId", "list1")
             self.tasks = [t for t in self.tasks if t["id"] != task_id]
             self.deleted.append(task_id)
             return None

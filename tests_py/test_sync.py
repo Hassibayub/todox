@@ -17,8 +17,8 @@ def test_completed_remote_tasks_do_not_look_deleted(workspace, fake):
     file, _ = workspace
     state_path = file.parent / "sync.json"
     Sync(fake, State(), path=state_path).apply(Sync(fake, State(), path=state_path).plan(reload(file)))
-    assert [t["status"] for t in fake.tasks] == [0, 0, 2]
-    assert [t["id"] for t in fake.project_tasks("list1")] == ["r1", "r2", "r3"]
+    assert [t["status"] for t in fake.tasks] == [0, 0]
+    assert [t["id"] for t in fake.project_tasks("list1")] == ["r1", "r2"]
     plan = Sync(fake, State.load(state_path), path=state_path).plan(reload(file))
     assert plan.summary() == {}
     # completing a task in the file still reaches TickTick, and stays quiet afterwards
@@ -28,21 +28,21 @@ def test_completed_remote_tasks_do_not_look_deleted(workspace, fake):
     assert plan.summary() == {"update": 1}
     engine.apply(plan)
     assert next(t for t in fake.tasks if t["id"] == "r1")["status"] == 2
-    assert Sync(fake, State.load(state_path), path=state_path).plan(reload(file)).summary() == {}
+    assert Sync(fake, State.load(state_path), path=state_path).plan(reload(file)).summary() == {"skip": 1}
 
 
 def test_push_create_stamps_ids_tags_and_progress(workspace, fake):
     file, _ = workspace
     engine = Sync(fake, State(), path=file.parent / "sync.json")
     plan = engine.plan(reload(file))
-    assert plan.summary() == {"create": 3}
+    assert plan.summary() == {"create": 2}
     engine.apply(plan)
     text = file.read_text()
-    assert text.count("<!-- todox:id=") == 3
-    assert [t["title"] for t in fake.tasks] == ["Alpha", "Beta", "Done"]
+    assert text.count("<!-- todox:id=") == 2
+    assert [t["title"] for t in fake.tasks] == ["Alpha", "Beta"]
     assert fake.tasks[1]["tags"] == ["web-app", IN_PROGRESS_TAG]
-    assert fake.tasks[2]["status"] == 2 and fake.tasks[2]["completedTime"]
-    assert len(engine.state.tasks) == 3
+    assert "- [x] Done (completed: 2026-10-10)" in text
+    assert len(engine.state.tasks) == 2
     # a second run is a no-op
     assert Sync(fake, State.load(file.parent / "sync.json"), path=file.parent / "sync.json").plan(reload(file)).changes == []
 

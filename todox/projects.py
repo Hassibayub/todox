@@ -5,7 +5,8 @@ from dataclasses import dataclass
 from pathlib import Path
 import json
 import os
-import tempfile
+import fcntl
+from .db import Database
 
 from .store import Document, read
 
@@ -16,6 +17,7 @@ class Project:
     path: Path
     doc: Document | None = None
     error: str | None = None
+    sync_enabled: bool = True
 
 
 def config_path() -> Path:
@@ -24,6 +26,9 @@ def config_path() -> Path:
 
 def load_config(path: Path | None = None) -> list[Project]:
     path = path or config_path()
+    stored = Database(registry=path).load_projects()
+    if stored is not None:
+        return [Project(p["name"], Path(p["path"]), sync_enabled=bool(p["sync_enabled"])) for p in stored]
     if not path.exists():
         return []
     data = json.loads(path.read_text(encoding="utf-8"))
@@ -40,24 +45,15 @@ def load_config(path: Path | None = None) -> list[Project]:
 
 def save_config(projects: list[Project], path: Path | None = None) -> None:
     path = path or config_path()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    lock = Path(str(path) + ".lock")
-    fd = os.open(lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
-    temp: str | None = None
-    try:
-        out, temp = tempfile.mkstemp(dir=path.parent, prefix=".projects.", suffix=".tmp")
-        with os.fdopen(out, "w", encoding="utf-8") as stream:
-            json.dump({"version": 1, "projects": [{"name": p.name, "path": str(p.path)} for p in projects]}, stream, indent=2)
-            stream.write("\n")
-            stream.flush()
-            os.fsync(stream.fileno())
-        os.replace(temp, path)
-        temp = None
-    finally:
-        if temp:
-            os.unlink(temp)
-        os.close(fd)
-        lock.unlink()
+    database = Database(registry=path)
+    database.path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    with Path(str(database.path) + ".lock").open("a") as lock:
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError as exc:
+            raise ValueError("A sync or registry update is running; retry after it finishes.") from exc
+        database.save_projects([
+            {"name": p.name, "path": str(p.path), "sync_enabled": p.sync_enabled} for p in projects])
 
 
 def resolve_todo(path: Path) -> Path:
@@ -97,7 +93,7 @@ def load_projects(projects: list[Project]) -> list[Project]:
     result = []
     for project in projects:
         try:
-            result.append(Project(project.name, project.path, read(project.path)))
+            result.append(Project(project.name, project.path, read(project.path), sync_enabled=project.sync_enabled))
         except (OSError, ValueError, UnicodeError) as exc:
-            result.append(Project(project.name, project.path, error=str(exc)))
+            result.append(Project(project.name, project.path, error=str(exc), sync_enabled=project.sync_enabled))
     return result

@@ -96,6 +96,8 @@ async def test_sync_on_launch_when_configured(workspace, monkeypatch, tmp_path):
     file, config = workspace
     monkeypatch.setenv("TODOX_SYNC_STATE", str(tmp_path / "sync.json"))
     monkeypatch.setenv("TODOX_AUTO_SYNC", "1")
+    from todox.sync import State
+    State(active_only=True).save(tmp_path / "sync.json", registry=config)
     import todox.ui as ui
     from todox.ticktick import Auth
     from tests_py.conftest import FakeTickTick
@@ -107,7 +109,7 @@ async def test_sync_on_launch_when_configured(workspace, monkeypatch, tmp_path):
     async with app.run_test(size=(60, 12)) as pilot:
         await pilot.pause(0.6)
         assert "create" in app.message
-        assert [t["title"] for t in fake.tasks] == ["Main task", "Active", "Old"]
+        assert [t["title"] for t in fake.tasks] == ["Main task", "Active"]
         assert "<!-- todox:id=" in file.read_text()
 
 
