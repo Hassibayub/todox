@@ -7,13 +7,18 @@ API Token) or an OAuth access token. Tokens live in
 """
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from datetime import date, timedelta
 from pathlib import Path
 from typing import Any, Callable
+from urllib.parse import urlsplit
+import http.client
 import json
 import os
+import ssl
 import tempfile
+import threading
 import urllib.error
 import urllib.request
 
@@ -74,6 +79,58 @@ class Auth:
         return self.token
 
 
+class HTTPSConnectionPool:
+    """Thread-safe connection pool with persistent HTTPS keep-alive."""
+
+    def __init__(self, timeout: int = 30) -> None:
+        self.timeout = timeout
+        self.ctx = ssl.create_default_context()
+        self._pool: dict[str, list[http.client.HTTPSConnection]] = {}
+        self._lock = threading.Lock()
+
+    def request(self, method: str, url: str, headers: dict[str, str], body: bytes | None) -> tuple[int, bytes]:
+        parts = urlsplit(url)
+        host = parts.netloc
+        path = parts.path or "/"
+        if parts.query:
+            path += "?" + parts.query
+
+        for attempt in range(2):
+            conn: http.client.HTTPSConnection | None = None
+            with self._lock:
+                conns = self._pool.setdefault(host, [])
+                if conns:
+                    conn = conns.pop()
+            if conn is None:
+                conn = http.client.HTTPSConnection(host, timeout=self.timeout, context=self.ctx)
+
+            try:
+                conn.request(method, path, body=body, headers=headers)
+                resp = conn.getresponse()
+                status = resp.status
+                data = resp.read()
+                with self._lock:
+                    self._pool.setdefault(host, []).append(conn)
+                return status, data
+            except (http.client.HTTPException, ConnectionError, OSError) as exc:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
+                if attempt == 0:
+                    continue
+                reason = getattr(exc, "reason", str(exc))
+                raise TickTickError(f"Cannot reach TickTick: {reason}") from exc
+        return 500, b""
+
+
+_GLOBAL_POOL = HTTPSConnectionPool()
+
+
+def persistent_transport(method: str, url: str, headers: dict[str, str], body: bytes | None) -> tuple[int, bytes]:
+    return _GLOBAL_POOL.request(method, url, headers, body)
+
+
 def urllib_transport(method: str, url: str, headers: dict[str, str], body: bytes | None) -> tuple[int, bytes]:
     request = urllib.request.Request(url, data=body, headers=headers, method=method)
     try:
@@ -90,7 +147,7 @@ class TickTick:
     """Minimal, explicit wrapper around the documented endpoints."""
 
     token: str
-    transport: Transport = urllib_transport
+    transport: Transport = persistent_transport
     tag_cache: dict[str, str] = field(default_factory=dict)
 
     def _call(self, method: str, path: str, payload: dict[str, Any] | None = None) -> Any:
@@ -160,18 +217,25 @@ class TickTick:
         an incomplete snapshot to reconcile or delete tasks.
         """
         found: dict[str, dict[str, Any]] = {}
-        for tag in sorted(set(tags)):
-            tasks = self._call("POST", "/open/v1/task/filter", {"tag": [tag]})
-            if not isinstance(tasks, list):
-                raise TickTickError("TickTick tag discovery failed; sync stopped without applying changes.")
-            if len(tasks) >= 200:
-                raise TickTickError(f"Tag {tag!r} reached TickTick's 200-task search limit; sync stopped to avoid incomplete data.")
-            for task in tasks:
-                if not isinstance(task, dict) or not task.get("id"):
-                    continue
-                if not task.get("projectId"):
-                    raise TickTickError("TickTick returned a tagged task without its list id; sync stopped.")
-                found[str(task["id"])] = task
+        tags_list = sorted(set(tags))
+        if not tags_list:
+            return []
+
+        def _fetch_tag(tag: str) -> tuple[str, Any]:
+            return tag, self._call("POST", "/open/v1/task/filter", {"tag": [tag]})
+
+        with ThreadPoolExecutor(max_workers=min(len(tags_list), 10)) as pool:
+            for tag, tasks in pool.map(_fetch_tag, tags_list):
+                if not isinstance(tasks, list):
+                    raise TickTickError("TickTick tag discovery failed; sync stopped without applying changes.")
+                if len(tasks) >= 200:
+                    raise TickTickError(f"Tag {tag!r} reached TickTick's 200-task search limit; sync stopped to avoid incomplete data.")
+                for task in tasks:
+                    if not isinstance(task, dict) or not task.get("id"):
+                        continue
+                    if not task.get("projectId"):
+                        raise TickTickError("TickTick returned a tagged task without its list id; sync stopped.")
+                    found[str(task["id"])] = task
         return list(found.values())
 
     def create_task(self, payload: dict[str, Any]) -> dict[str, Any]:

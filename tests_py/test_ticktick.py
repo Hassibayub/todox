@@ -74,3 +74,20 @@ def test_cli_sync_dry_run_json(tmp_path: Path, monkeypatch, capsys):
     assert json.loads(capsys.readouterr().out)["changes"] == []
     with pytest.raises(ValueError, match="keep-local"):
         run(["sync", "--keep-local"], tmp_path)
+
+
+def test_tagged_tasks_discovers_in_parallel():
+    client = TickTick("token")
+    requested_tags = []
+
+    def fake_call(method, path, payload=None):
+        if path == "/open/v1/task/filter":
+            requested_tags.extend(payload["tag"])
+            return [{"id": f"id_{t}", "projectId": "p1", "title": f"Task {t}"} for t in payload["tag"]]
+        return []
+
+    client._call = fake_call
+    tasks = client.tagged_tasks(["alpha", "beta", "gamma"])
+    assert len(tasks) == 3
+    assert set(requested_tags) == {"alpha", "beta", "gamma"}
+
