@@ -216,7 +216,10 @@ class Plan:
         completed = sum(c.action == "skip" and c.reason.startswith("completed locally;") for c in self.changes)
         if completed:
             lines.append(f"Optional cleanup: {completed} completed task{'s' if completed != 1 else ''} remain{'s' if completed == 1 else ''} in TickTick.")
-        if attention or unavailable or completed:
+        deleted_local = sum(c.action == "skip" and c.reason.startswith("deleted locally;") for c in self.changes)
+        if deleted_local:
+            lines.append(f"Notice: {deleted_local} task{'s' if deleted_local != 1 else ''} deleted locally; TickTick copies kept (use --allow-deletes).")
+        if attention or unavailable or completed or deleted_local:
             lines.append("Details: todo sync --dry-run --verbose")
         return lines
 
