@@ -99,6 +99,7 @@ class TodoApp(App[None]):
         self.show_dates = False
         # TODOX_WRAP=0 opens with long rows clipped to one line instead of wrapped.
         self.wrap = os.environ.get("TODOX_WRAP", "1").strip().lower() not in {"0", "false", "off", "no"}
+        self._built_wrap = self.wrap
         self.search_query = ""
         self.prompt_kind: str | None = None
         self.prompt_row: Row | None = None
@@ -259,23 +260,52 @@ class TodoApp(App[None]):
             body.append(f" · {t.completed}", style="dim")
         return RowRender(body, "task-row" + (" done" if t.status == "x" else ""), prefix)
 
-    def _paint_selection(self) -> None:
-        """Move the ``>`` marker without rebuilding the list on every keypress."""
+    def _row_classes(self, rendered: RowRender) -> str:
+        # ``unwrap`` clips long rows to one line; wrapping is the default.
+        return rendered.classes if self.wrap else rendered.classes + " unwrap"
+
+    def _paint_rows(self, indices) -> None:
+        """Re-render only the given rows; a keypress must not repaint the whole list."""
         width = self.size.width
-        for index, (row, widgets) in enumerate(zip(self.rows, self._row_widgets)):
+        for index in indices:
+            if not 0 <= index < len(self.rows) or index >= len(self._row_widgets):
+                continue
+            row = self.rows[index]
+            widgets = self._row_widgets[index]
             rendered = self._render_row(row, width, index, index == self.selected_index)
+            classes = self._row_classes(rendered)
+            if set(widgets.item.classes) != set(classes.split()):
+                widgets.item.set_classes(classes)
             widgets.body.update(rendered.body)
             if widgets.marker is not None:
                 widgets.marker.update(rendered.marker or Text())
 
+    def _paint_selection(self) -> None:
+        """Repaint every row; used after a rebuild or a width change, not per key."""
+        self._paint_rows(range(len(self.rows)))
+
+    def _row_identity(self, row: Row) -> tuple:
+        """What must change for the list to need rebuilding instead of repainting."""
+        if row.kind == "task":
+            return ("task", row.project.path if row.project else None, row.task.line, row.task.uid or row.task.text)
+        if row.kind == "section":
+            return ("section", row.project.path if row.project else None, row.section.line)
+        if row.kind == "project":
+            return ("project", row.project.path)
+        if row.kind == "conflict":
+            return ("conflict", row.change.uid)
+        return (row.kind,)
+
     async def on_list_view_highlighted(self, event: ListView.Highlighted) -> None:
         if event.list_view.id != "items":
             return
+        previous = self.selected_index
         self.selected_index = event.list_view.index or 0
         if self.pending_delete is not None:
             self.pending_delete = None
             self.message = ""
-        self._paint_selection()
+        # Only the row that lost the ``>`` marker and the one that gained it changed.
+        self._paint_rows({previous, self.selected_index})
 
     async def draw(self, preserve: bool = False) -> None:
         if not self.is_mounted:
@@ -283,14 +313,28 @@ class TodoApp(App[None]):
         listing = self.query_one("#items", ListView)
         old = self._selected() if preserve else None
         old_index = listing.index or 0
-        self.rows = self._rows()
+        rows = self._rows()
+        # The same rows with the same wrapping only need fresh text: rebuilding
+        # hundreds of ListItems on resize or refresh blocks the event loop.
+        if preserve and self._built_wrap == self.wrap and [self._row_identity(r) for r in rows] == [self._row_identity(r) for r in self.rows]:
+            self.rows = rows
+            if rows:
+                old_key = self._row_identity(old) if old else None
+                index = next((i for i, r in enumerate(rows) if old_key is not None and self._row_identity(r) == old_key),
+                             min(old_index, len(rows) - 1))
+                if listing.index != index:
+                    listing.index = index
+                self.selected_index = index
+            self._paint_selection()
+            self._update_chrome()
+            return
+        self.rows = rows
         self._row_widgets = []
         items: list[ListItem] = []
         width = self.size.width
         for index, row in enumerate(self.rows):
             rendered = self._render_row(row, width, index)
-            # ``unwrap`` clips long rows to one line; wrapping is the default.
-            classes = rendered.classes if self.wrap else rendered.classes + " unwrap"
+            classes = self._row_classes(rendered)
             if rendered.marker is None:
                 body = Static(rendered.body, markup=False)
                 item = ListItem(body, classes=classes)
@@ -302,6 +346,7 @@ class TodoApp(App[None]):
                 self._row_widgets.append(RowWidgets(item, body, marker))
             items.append(item)
         await listing.clear()
+        self._built_wrap = self.wrap
         if items:
             await listing.extend(items)
             index = self.rows.index(old) if old in self.rows else min(old_index, len(self.rows) - 1) if preserve else 0

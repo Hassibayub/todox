@@ -6,6 +6,8 @@ The distribution is named `todox-tui` (the PyPI name `todox` belongs to an unrel
 
 ## Unreleased
 
+- Keep the cursor responsive on large files: moving the selection repaints only the row losing the `>` marker and the row gaining it instead of every row, and refreshing, toggling dates or changing a status reuses the existing rows instead of rebuilding the whole list. A refresh or terminal resize no longer blocks the event loop for seconds.
+
 - Open local tasks immediately and sync in an owned background process. Quit stops and reaps it promptly instead of waiting for a network thread; interrupted uploads retain their journal records. View changes and display workers no longer cancel sync.
 - Short, plain-language sync output by default; hide normal skips and internal paths, summarize optional cleanup once, show actual changes and actionable review items. `--verbose` retains the detailed report; JSON output stays compatible.
 - Keep conflict-resolution failures visible and run resolution in the background, without blocking keyboard navigation or quitting.

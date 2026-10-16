@@ -343,3 +343,34 @@ async def test_wrap_can_start_clipped_from_the_environment(long_task, monkeypatc
         await pilot.pause(0.1)
         _, body = _row_parts(app)
         assert app.wrap is False and body.size.height == 1 and body.render_line(0).text.endswith("…")
+
+
+@pytest.mark.asyncio
+async def test_moving_the_selection_repaints_only_the_changed_rows(workspace):
+    """Repainting every row on each keypress backs up on large files."""
+    file, config = workspace
+    app = TodoApp(local=file, registry=config)
+    async with app.run_test(size=(60, 14)) as pilot:
+        calls: list[set[int]] = []
+        original = app._paint_rows
+        app._paint_rows = lambda indices: (calls.append(set(indices)), original(indices))[1]
+        await pilot.press("j")
+        assert calls and calls[-1] == {0, 1}, "only the old and new selection need a new marker"
+
+
+@pytest.mark.asyncio
+async def test_refresh_and_dates_reuse_rows_instead_of_rebuilding(workspace):
+    """A full ListItem rebuild blocks the event loop; unchanged rows must be kept."""
+    file, config = workspace
+    app = TodoApp(local=file, registry=config)
+    async with app.run_test(size=(60, 14)) as pilot:
+        items = lambda: [id(item) for item in app.query_one("#items").children]
+        before = items()
+        await pilot.press("d")
+        assert items() == before and app.show_dates
+        await pilot.press("r")
+        assert items() == before
+        # A change to the set of rows still rebuilds them.
+        await pilot.press("n")
+        await pilot.press(*"Fresh", "enter")
+        assert items() != before and any(r.task and r.task.text == "Fresh" for r in app.rows)
