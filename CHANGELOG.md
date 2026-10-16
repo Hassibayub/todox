@@ -6,6 +6,8 @@ The distribution is named `todox-tui` (the PyPI name `todox` belongs to an unrel
 
 ## Unreleased
 
+- Up/Down arrows now move the selection through the same code path as `j`/`k`, so they keep working when the list itself is not focused; they no longer fall back to being a no-op while `j`/`k` work. Arrows in the search/add/edit prompt still move the text cursor.
+
 - Keep the cursor responsive on large files: moving the selection repaints only the row losing the `>` marker and the row gaining it instead of every row, and refreshing, toggling dates or changing a status reuses the existing rows instead of rebuilding the whole list. A refresh or terminal resize no longer blocks the event loop for seconds.
 
 - Open local tasks immediately and sync in an owned background process. Quit stops and reaps it promptly instead of waiting for a network thread; interrupted uploads retain their journal records. View changes and display workers no longer cancel sync.

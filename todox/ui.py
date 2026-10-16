@@ -53,6 +53,19 @@ class RowWidgets:
     marker: Static | None = None
 
 
+class TaskList(ListView):
+    """The task/project list, without its own cursor-key bindings.
+
+    ``ListView`` normally binds ``up``/``down`` to its cursor actions, but those
+    bindings only exist while the list itself holds focus. The app moves the
+    cursor from ``on_key`` instead (the same path as ``j``/``k``), so navigation
+    keeps working even when focus sits on the screen rather than the list. Those
+    bindings are dropped here to avoid moving twice when the list is focused.
+    """
+
+    BINDINGS = [binding for binding in ListView.BINDINGS if binding.key not in {"up", "down"}]
+
+
 class TodoApp(App[None]):
     CSS_PATH = "ui.tcss"
     TITLE = "todo"
@@ -116,7 +129,7 @@ class TodoApp(App[None]):
     def compose(self) -> ComposeResult:
         with Vertical(id="shell"):
             yield Static(id="title")
-            yield ListView(id="items")
+            yield TaskList(id="items")
             yield Static(id="empty")
             yield Input(id="prompt")
             yield Static(id="footer")
@@ -876,10 +889,14 @@ class TodoApp(App[None]):
                 return
             self.message = ""
             self._update_chrome()
+        # Arrows and j/k share one code path so a keypress moves the cursor no
+        # matter which widget currently has focus.
         listing = self.query_one("#items", ListView)
-        if event.key == "j":
+        if event.key in {"j", "down"}:
             listing.action_cursor_down()
+            event.prevent_default()
             event.stop()
-        elif event.key == "k":
+        elif event.key in {"k", "up"}:
             listing.action_cursor_up()
+            event.prevent_default()
             event.stop()

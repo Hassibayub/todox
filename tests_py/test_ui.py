@@ -374,3 +374,34 @@ async def test_refresh_and_dates_reuse_rows_instead_of_rebuilding(workspace):
         await pilot.press("n")
         await pilot.press(*"Fresh", "enter")
         assert items() != before and any(r.task and r.task.text == "Fresh" for r in app.rows)
+
+
+@pytest.mark.asyncio
+async def test_arrows_move_exactly_one_row_even_without_list_focus(workspace):
+    """Up/Down must take the same always-live path as j/k.
+
+    A focused ``ListView`` moves its own cursor when it holds focus, and the app
+    moves it from ``on_key`` otherwise; binding both would step twice, and
+    relying only on the list would strand the arrows when focus is elsewhere.
+    """
+    file, config = workspace
+    app = TodoApp(local=file, registry=config)
+    async with app.run_test(size=(60, 14)) as pilot:
+        listing = app.query_one("#items")
+        assert listing.index == 0
+        await pilot.press("down")
+        assert listing.index == 1, "a focused list must not step twice"
+        await pilot.press("up")
+        assert listing.index == 0
+        # Some terminals/actions leave nothing focused; arrows must still work.
+        app.screen.set_focus(None)
+        await pilot.pause()
+        await pilot.press("down", "down")
+        assert listing.index == 2
+        await pilot.press("up")
+        assert listing.index == 1
+        # j/k share the path.
+        await pilot.press("j")
+        assert listing.index == 2
+        await pilot.press("k")
+        assert listing.index == 1
