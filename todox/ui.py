@@ -79,6 +79,7 @@ class TodoApp(App[None]):
         Binding("t", "tasks", "Tasks", show=False),
         Binding("c", "copy_path", "Copy path", show=False),
         Binding("s", "new_section", "Section", show=False),
+        Binding("S", "sort_dates", "Sort by date", show=False),
         Binding("space", "cycle_status", "Status", show=False),
         Binding("1", "todo_status", "Todo", show=False),
         Binding("2", "progress_status", "In progress", show=False),
@@ -110,6 +111,8 @@ class TodoApp(App[None]):
         self.selected_index = 0
         self.show_completed = True
         self.show_dates = False
+        # Date sort while dates are visible: None keeps file order, else "newest" / "oldest".
+        self.date_sort: str | None = None
         # TODOX_WRAP=0 opens with long rows clipped to one line instead of wrapped.
         self.wrap = os.environ.get("TODOX_WRAP", "1").strip().lower() not in {"0", "false", "off", "no"}
         self._built_wrap = self.wrap
@@ -182,6 +185,11 @@ class TodoApp(App[None]):
         result: list[Row] = []
         for section in doc.sections:
             section_tasks = [t for t in matching if t.section == section.line]
+            if self.show_dates and self.date_sort:
+                # Undated tasks keep file order after the dated ones.
+                dated = sorted((t for t in section_tasks if t.completed), key=lambda t: t.completed or "",
+                               reverse=self.date_sort == "newest")
+                section_tasks = dated + [t for t in section_tasks if not t.completed]
             # A search shows only matching groups; otherwise empty sections remain actionable.
             if not section.main and (not self.search_query or section_tasks):
                 result.append(Row("section", project, section=section))
@@ -204,7 +212,7 @@ class TodoApp(App[None]):
     def _help_lines(self) -> list[str]:
         if self.size.width < 42:
             common = ["j/k, ↑↓  Move", "Enter  Open / edit", "n  New task", "e  Edit task",
-                      "Space, 1–3  Status", "u  Toggle completed", "d  Toggle dates", "w  Wrap text",
+                      "Space, 1–3  Status", "u  Toggle completed", "d  Toggle dates", "S  Sort by date", "w  Wrap text",
                       "s  New section", "x  Delete task (then y)", "Backspace  Remove section (then y)",
                       "/  Search", "o  Neovim", "y  Copy task", "Y  Sync TickTick", "r  Refresh", "Esc  Back · clear status", "q  Quit"]
             if not self.local:
@@ -213,7 +221,7 @@ class TodoApp(App[None]):
         common = ["j/k, ↑↓       Move", "Enter         Open project / edit task",
                   "n             New task (selected section)", "e             Edit task",
                   "Space, 1–3    Change status", "u             Show / hide completed",
-                  "d             Show / hide dates", "w             Wrap / clip long rows", "s             Add ## section",
+                  "d             Show / hide dates", "S             Sort by date (dates on)", "w             Wrap / clip long rows", "s             Add ## section",
                   "x             Delete task (then y)", "Backspace     Remove empty section (then y)",
                   "o             Open task in Neovim", "/             Search; Esc clears",
                   "y             Copy selected task", "Y             Sync with TickTick",
@@ -549,6 +557,13 @@ class TodoApp(App[None]):
             return
         self.show_dates = not self.show_dates
         self.message = "Dates visible" if self.show_dates else "Dates hidden"
+        self.run_worker(self.draw(preserve=True), exclusive=True)
+
+    def action_sort_dates(self) -> None:
+        if self.page != "detail" or self.prompt_kind or not self.show_dates:
+            return
+        self.date_sort = {None: "newest", "newest": "oldest", "oldest": None}[self.date_sort]
+        self.message = {"newest": "Sorted newest first", "oldest": "Sorted oldest first", None: "File order"}[self.date_sort]
         self.run_worker(self.draw(preserve=True), exclusive=True)
 
     def action_toggle_wrap(self) -> None:
