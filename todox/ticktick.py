@@ -25,6 +25,8 @@ import urllib.request
 API = "https://api.ticktick.com"
 LIST_NAME = "TODO.md"
 IN_PROGRESS_TAG = "inprogress"
+IN_REVIEW_TAG = "inreview"
+STATUS_TAGS = {"/": IN_PROGRESS_TAG, "?": IN_REVIEW_TAG}
 Transport = Callable[[str, str, dict[str, str], bytes | None], tuple[int, bytes]]
 
 

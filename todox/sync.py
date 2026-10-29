@@ -22,7 +22,7 @@ import uuid
 from .db import Database, config_root, database_path, legacy_state_path, registry_key
 from .projects import Project, config_path, load_config
 from .store import Document, Task, main_section, read, save
-from .ticktick import IN_PROGRESS_TAG, LIST_NAME, TickTick, TickTickError
+from .ticktick import STATUS_TAGS, LIST_NAME, TickTick, TickTickError
 
 
 def state_path() -> Path:
@@ -59,7 +59,9 @@ def local_signature(task: Task) -> str:
 def remote_status(task: dict[str, Any]) -> str:
     if task.get("status") == 2 or task.get("completedTime"):
         return "x"
-    return "/" if IN_PROGRESS_TAG in (task.get("tags") or []) else " "
+    tags = task.get("tags") or []
+    # Review wins if a remote task accidentally carries both workflow tags.
+    return next((status for status in reversed(STATUS_TAGS) if STATUS_TAGS[status] in tags), " ")
 
 
 def remote_completed(task: dict[str, Any]) -> str | None:
@@ -330,7 +332,7 @@ class Sync:
             name = p.name.strip().lower()[:64]
             tag_counts[name] = tag_counts.get(name, 0) + 1
         blocked = {str(p.path) for p in projects if not p.name.strip() or
-                   p.name.strip().lower()[:64] == IN_PROGRESS_TAG or tag_counts[p.name.strip().lower()[:64]] > 1}
+                   p.name.strip().lower()[:64] in STATUS_TAGS.values() or tag_counts[p.name.strip().lower()[:64]] > 1}
         unavailable.update(blocked)
         ambiguous_remote = {str(t["id"]) for t in remote if sum(
             p.name.strip().lower()[:64] in {str(tag).lower() for tag in t.get("tags", [])}
@@ -785,7 +787,7 @@ class Sync:
         entry = self.state.tasks.get(change.uid)
         target_list = entry.list_id if entry and entry.retired and entry.list_id else plan.list_id
         tag = self.client.ensure_tag(change.name)
-        tags = [tag] + ([self.client.ensure_tag(IN_PROGRESS_TAG)] if task.status == "/" else [])
+        tags = [tag] + ([self.client.ensure_tag(STATUS_TAGS[task.status])] if task.status in STATUS_TAGS else [])
         self._create_sent = True
         created = self.client.create_task({"title": task.text, "projectId": target_list, "tags": tags, "status": 0})
         remote_id = str(created.get("id", ""))
@@ -818,9 +820,9 @@ class Sync:
             raise TickTickError("Local task changed since preview; refresh before syncing.")
         current = self._check_remote(plan, change)
         tag = self.client.ensure_tag(change.name)
-        tags = list(dict.fromkeys([str(t) for t in change.remote.get("tags", []) if t != IN_PROGRESS_TAG] + [tag]))
-        if task.status == "/":
-            tags.append(self.client.ensure_tag(IN_PROGRESS_TAG))
+        tags = list(dict.fromkeys([str(t) for t in change.remote.get("tags", []) if t not in STATUS_TAGS.values()] + [tag]))
+        if task.status in STATUS_TAGS:
+            tags.append(self.client.ensure_tag(STATUS_TAGS[task.status]))
         remote_list = self._remote_list(plan, change)
         # Send current values for writable remote-only fields as well, so API
         # defaults cannot clear priorities, reminders, notes or schedules.

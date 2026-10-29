@@ -81,7 +81,7 @@ async def test_local_status_dates_visibility_and_search(workspace):
         await pilot.press("u", "d")
         assert app.show_dates
         app.query_one("#items").index = 0
-        await pilot.press("3")
+        await pilot.press("4")
         assert "completed:" in file.read_text()
         await pilot.press("/")
         assert app.prompt_kind == "search"

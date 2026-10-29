@@ -62,7 +62,7 @@ A normal `todo` invocation opens the local file if one exists; from that screen 
 
 ## Screens and keys
 
-**Projects** shows each project's completed, in-progress, and todo counts. `Enter` opens it; `c` copies its directory path; `t` opens the global list of todo and in-progress tasks. `p` returns to Projects from a globally opened project or the task list.
+**Projects** shows each project's not-started, in-progress, in-review, and completed counts. `Enter` opens it; `c` copies its directory path; `t` opens the global list of unfinished tasks. `p` returns to Projects from a globally opened project or the task list.
 
 **Project tasks** show tasks before the first `##` heading without a visible Main heading. An older `## General` or `## Main` as the first section is also hidden. Each other `##` heading groups its tasks. `n` on a section adds there; `n` elsewhere adds to Main.
 
@@ -71,7 +71,7 @@ A normal `todo` invocation opens the local file if one exists; from that screen 
 | `j/k`, arrows | Move through a scrolling list |
 | `Enter` | Open project, or edit task; on a section, add there |
 | `n`, `e` | Add or edit task |
-| `Space`, `1/2/3` | Cycle or set todo / in progress / completed |
+| `Space`, `1/2/3/4` | Cycle or set not started / in progress / in review / completed |
 | `u` | Hide or show completed tasks |
 | `d` | Hide or show completion dates in the UI |
 | `w` | Wrap long rows, or clip them to one line with `…` |
@@ -115,7 +115,7 @@ Details: todo sync --dry-run --verbose
 
 Background UI sync runs in an owned subprocess, not an uncancellable thread. On exit it is asked to unwind its file locks and SQLite transactions, with a short bounded fallback if it fails to stop. Unknown upload outcomes remain in the operation journal and are not blindly retried. Changing views or toggling wrapping does not cancel the sync.
 
-**Mapping.** Project tags drive sync across **Inbox and all accessible TickTick lists**, not just `TODO.md`. A task tagged `web-app` imports into the registered `web-app/TODO.md` file wherever it lives remotely. Its original list is retained for updates, completion, deletion, and reopening after retirement. New local tasks upload into the dedicated `TODO.md` list (created only when needed). `[ ]` and `[/]` stay open in TickTick, with `[/]` also carrying an `inprogress` tag because TickTick has no in-progress state. Historical `[x]` tasks stay local and are not uploaded. Sections stay local. Tasks matching multiple project tags pause for review; removing a linked task's project tag pauses propagation without deleting either copy. Empty, colliding, or reserved (`inprogress`) project tags pause rather than guessing a mapping. Personal TickTick tags are preserved during updates. Incomplete or capped API discovery stops sync rather than inferring deletions.
+**Mapping.** Project tags drive sync across **Inbox and all accessible TickTick lists**, not just `TODO.md`. A task tagged `web-app` imports into the registered `web-app/TODO.md` file wherever it lives remotely. Its original list is retained for updates, completion, deletion, and reopening after retirement. New local tasks upload into the dedicated `TODO.md` list (created only when needed). `[ ]` (not started), `[/]` (in progress), and `[?]` (in review) stay open in TickTick. `[/]` carries an `inprogress` tag and `[?]` carries an `inreview` tag to preserve their workflow states. Historical `[x]` tasks stay local and are not uploaded. Sections stay local. Tasks matching multiple project tags pause for review; removing a linked task's project tag pauses propagation without deleting either copy. Empty, colliding, or reserved (`inprogress`, `inreview`) project tags pause rather than guessing a mapping. Personal TickTick tags are preserved during updates. Incomplete or capped API discovery stops sync rather than inferring deletions.
 
 **Completed projects.** An existing synced task is marked completed on TickTick when you complete it locally. To remove its completed remote copy while retaining local history, preview `todo sync --dry-run --allow-deletes --json`, then approve with `todo sync --allow-deletes`. `retire` means a completed remote copy will be deleted, not the local task. Its sync id stays recorded as local-only, so subsequent syncs do not re-upload it; reopening the task creates a fresh remote copy. Completion detected remotely is first pulled into the local file, and becomes eligible for cleanup on the next sync. The shared `TODO.md` list is never deleted. TickTick may retain empty sidebar tags: automatic tag deletion is not implemented because a supported official endpoint has not been verified.
 

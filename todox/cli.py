@@ -210,9 +210,9 @@ def run(args: list[str] | None = None, cwd: Path | None = None) -> int:
     if command == "stats" and (len(args) == 1 or args == ["stats", "--json"]):
         projects = load_projects(load_config())
         tally = counts([task for p in projects if p.doc for task in p.doc.tasks])
-        result = {"projects": len(projects), "notStarted": tally[" "], "inProgress": tally["/"], "completed": tally["x"],
+        result = {"projects": len(projects), "notStarted": tally[" "], "inProgress": tally["/"], "inReview": tally["?"], "completed": tally["x"],
                   "errors": [{"path": str(p.path), "error": p.error} for p in projects if p.error]}
-        print(json.dumps(result, indent=2) if "--json" in args else f'{result["projects"]} projects · {tally[" "]} todo · {tally["/"]} in progress · {tally["x"]} completed')
+        print(json.dumps(result, indent=2) if "--json" in args else f'{result["projects"]} projects · {tally[" "]} not started · {tally["/"]} in progress · {tally["?"]} in review · {tally["x"]} completed')
         return 0
     if args and args != ["--global"] and not (len(args) == 2 and args[0] == "--file"):
         raise ValueError("Unknown arguments. Run todo --help.")

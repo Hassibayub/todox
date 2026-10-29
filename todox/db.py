@@ -15,6 +15,9 @@ import sqlite3
 import uuid
 
 
+from .ticktick import STATUS_TAGS
+
+
 VERSION = 1
 
 
@@ -171,8 +174,8 @@ class Database:
             for position, project in enumerate(projects):
                 name = project["name"]
                 tag = name.strip().lower()[:64]
-                if not tag or tag == "inprogress":
-                    raise ValueError("Project tags must be non-empty and cannot be 'inprogress'.")
+                if not tag or tag in STATUS_TAGS.values():
+                    raise ValueError("Project tags must be non-empty and cannot be 'inprogress' or 'inreview'.")
                 con.execute("""INSERT INTO projects(profile_id,path,name,tag,registered,sync_enabled,position)
                     VALUES(?,?,?,?,1,?,?) ON CONFLICT(profile_id,path) DO UPDATE SET
                     name=excluded.name,tag=excluded.tag,registered=1,sync_enabled=excluded.sync_enabled,position=excluded.position""",

@@ -9,11 +9,12 @@ import re
 import stat
 import tempfile
 
-STATUS = {" ": "todo", "/": "in progress", "x": "completed"}
+STATUS = {" ": "not started", "/": "in progress", "?": "in review", "x": "completed"}
+STATUS_CYCLE = tuple(STATUS)
 DATE = re.compile(r" \(completed: (\d{4}-\d{2}-\d{2})\)$")
 UID = re.compile(r"\s*<!--\s*todox:id=([0-9a-zA-Z_-]{6,32})\s*-->$")
 HEADING = re.compile(r"^ {0,3}(#{1,6})[ \t]+(.+?)\s*$")
-TASK = re.compile(r"^(\s*[-+*]\s+\[)([ /xX])(\]\s+)(.*)$")
+TASK = re.compile(r"^(\s*[-+*]\s+\[)([ /?xX])(\]\s+)(.*)$")
 FENCE = re.compile(r"^ {0,3}(`{3,}|~{3,})(.*)$")
 
 

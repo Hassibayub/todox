@@ -22,7 +22,7 @@ from textual.events import Resize
 from textual.widgets import Input, ListItem, ListView, Static
 
 from .projects import Project, load_config, load_projects
-from .store import Document, Section, Task, counts, main_section, save
+from .store import STATUS, STATUS_CYCLE, Document, Section, Task, counts, main_section, save
 from .sync import Change, Plan, Sync, friendly_error, review_reason
 from .background import BackgroundSync
 from .ticktick import Auth, TickTick, TickTickError
@@ -81,9 +81,10 @@ class TodoApp(App[None]):
         Binding("s", "new_section", "Section", show=False),
         Binding("S", "sort_dates", "Sort by date", show=False),
         Binding("space", "cycle_status", "Status", show=False),
-        Binding("1", "todo_status", "Todo", show=False),
+        Binding("1", "todo_status", "Not started", show=False),
         Binding("2", "progress_status", "In progress", show=False),
-        Binding("3", "done_status", "Completed", show=False),
+        Binding("3", "review_status", "In review", show=False),
+        Binding("4", "done_status", "Completed", show=False),
         Binding("x", "delete_task", "Delete", show=False),
         Binding("backspace", "remove_section", "Remove section", show=False),
         Binding("o", "open_editor", "Neovim", show=False),
@@ -212,7 +213,7 @@ class TodoApp(App[None]):
     def _help_lines(self) -> list[str]:
         if self.size.width < 42:
             common = ["j/k, ↑↓  Move", "Enter  Open / edit", "n  New task", "e  Edit task",
-                      "Space, 1–3  Status", "u  Toggle completed", "d  Toggle dates", "S  Sort by date", "w  Wrap text",
+                      "Space, 1–4  Status", "u  Toggle completed", "d  Toggle dates", "S  Sort by date", "w  Wrap text",
                       "s  New section", "x  Delete task (then y)", "Backspace  Remove section (then y)",
                       "/  Search", "o  Neovim", "y  Copy task", "Y  Sync TickTick", "r  Refresh", "Esc  Back · clear status", "q  Quit"]
             if not self.local:
@@ -220,7 +221,7 @@ class TodoApp(App[None]):
             return common
         common = ["j/k, ↑↓       Move", "Enter         Open project / edit task",
                   "n             New task (selected section)", "e             Edit task",
-                  "Space, 1–3    Change status", "u             Show / hide completed",
+                  "Space, 1–4    Not started / in progress / in review / completed", "u             Show / hide completed",
                   "d             Show / hide dates", "S             Sort by date (dates on)", "w             Wrap / clip long rows", "s             Add ## section",
                   "x             Delete task (then y)", "Backspace     Remove empty section (then y)",
                   "o             Open task in Neovim", "/             Search; Esc clears",
@@ -251,10 +252,10 @@ class TodoApp(App[None]):
             if p.error:
                 unavailable = Text.assemble((marker, "bold" if selected else ""), (p.name, "bold"), ("  unavailable", "red"))
                 return RowRender(unavailable, "project-row")
-            tally = counts(list(p.doc.tasks)) if p.doc else {" ": 0, "/": 0, "x": 0}
-            summary = f'{tally["x"]} completed  ·  {tally["/"]} in progress  ·  {tally[" "]} todo'
-            if width < 78:
-                compact = f'{tally["x"]} done · {tally["/"]} doing · {tally[" "]} todo'
+            tally = counts(p.doc.tasks if p.doc else [])
+            summary = "  ·  ".join(f"{tally[status]} {label}" for status, label in STATUS.items())
+            if width < max(78, cell_len(p.name) + cell_len(summary) + 15):
+                compact = " · ".join(f"[{status}] {tally[status]}" for status in STATUS)
                 narrow = Text.assemble((marker, "bold" if selected else ""), (p.name + "\n", "bold"), ("  " + compact, "dim"))
                 return RowRender(narrow, "project-row narrow")
             label = Text(marker, style="bold" if selected else "")
@@ -270,7 +271,7 @@ class TodoApp(App[None]):
             return RowRender(Text(section.title, style="bold"), "section-row", Text(marker, style="bold" if selected else ""))
         assert row.task and row.project
         t = row.task
-        box = {" ": "[ ]", "/": "[/]", "x": "[x]"}[t.status]
+        box = f"[{t.status}]"
         prefix = Text(marker, style="bold" if selected else "")
         prefix.append(box + "  ", style="dim" if t.status == "x" else "bold")
         body = Text()
@@ -743,7 +744,7 @@ class TodoApp(App[None]):
         if self.page != "detail" or not row or not row.task or not row.project or not row.project.doc or self.prompt_kind:
             return
         task = row.task
-        target = status or {" ": "/", "/": "x", "x": " "}[task.status]
+        target = status or STATUS_CYCLE[(STATUS_CYCLE.index(task.status) + 1) % len(STATUS_CYCLE)]
         try:
             updated = save(row.project.doc, "status", line=task.line, status=target)
         except (OSError, ValueError) as exc:
@@ -751,7 +752,7 @@ class TodoApp(App[None]):
             self._update_chrome()
             return
         self._replace_doc(row.project.path, updated)
-        self.message = {" ": "Todo", "/": "In progress", "x": "Completed"}[target]
+        self.message = STATUS[target].capitalize()
         await self.draw(preserve=True)
 
     def action_sync(self) -> None:
@@ -875,6 +876,9 @@ class TodoApp(App[None]):
             await self._resolve_conflict("remote")
             return
         await self._set_status("/")
+
+    async def action_review_status(self) -> None:
+        await self._set_status("?")
 
     async def action_done_status(self) -> None:
         await self._set_status("x")
