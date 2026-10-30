@@ -18,6 +18,26 @@ def workspace(tmp_path: Path):
 
 
 @pytest.mark.asyncio
+async def test_status_grouping_and_completed_toggle(workspace):
+    file, config = workspace
+    original = file.read_text()
+    app = TodoApp(local=file, registry=config)
+    async with app.run_test(size=(70, 18)) as pilot:
+        await pilot.press("g")
+        assert [(r.kind, r.status if r.kind == "status" else r.task.text) for r in app.rows] == [
+            ("status", " "), ("task", "Main task"), ("status", "/"), ("task", "Active"),
+            ("status", "?"), ("status", "x"), ("task", "Old"),
+        ]
+        await pilot.press("u")
+        assert not any(r.status == "x" or (r.task and r.task.status == "x") for r in app.rows)
+        await pilot.press("u")
+        assert any(r.task and r.task.text == "Old" for r in app.rows)
+        await pilot.press("g")
+        assert [r.kind for r in app.rows] == ["task", "section", "task", "task"]
+        assert file.read_text() == original
+
+
+@pytest.mark.asyncio
 async def test_global_opens_projects_and_navigates(workspace):
     file, config = workspace
     app = TodoApp(registry=config)

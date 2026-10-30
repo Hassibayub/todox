@@ -35,6 +35,7 @@ class Row:
     task: Task | None = None
     section: Section | None = None
     change: Change | None = None
+    status: str | None = None
 
 
 @dataclass(frozen=True)
@@ -73,6 +74,7 @@ class TodoApp(App[None]):
         Binding("n", "new_task", "New task", show=False),
         Binding("e", "edit_task", "Edit", show=False),
         Binding("u", "toggle_completed", "Completed", show=False),
+        Binding("g", "toggle_grouping", "Group by status", show=False),
         Binding("d", "toggle_dates", "Dates", show=False),
         Binding("w", "toggle_wrap", "Wrap", show=False),
         Binding("p", "projects", "Projects", show=False),
@@ -111,6 +113,7 @@ class TodoApp(App[None]):
         self._row_widgets: list[RowWidgets] = []
         self.selected_index = 0
         self.show_completed = True
+        self.group_by_status = False
         self.show_dates = False
         # Date sort while dates are visible: None keeps file order, else "newest" / "oldest".
         self.date_sort: str | None = None
@@ -184,6 +187,20 @@ class TodoApp(App[None]):
         doc = project.doc
         matching = [t for t in doc.tasks if (self.show_completed or t.status != "x") and self.search_query.casefold() in t.text.casefold()]
         result: list[Row] = []
+        if self.group_by_status:
+            for status in STATUS:
+                if status == "x" and not self.show_completed:
+                    continue
+                tasks = [task for task in matching if task.status == status]
+                if self.search_query and not tasks:
+                    continue
+                if self.show_dates and self.date_sort:
+                    dated = sorted((t for t in tasks if t.completed), key=lambda t: t.completed or "",
+                                   reverse=self.date_sort == "newest")
+                    tasks = dated + [t for t in tasks if not t.completed]
+                result.append(Row("status", project, status=status))
+                result.extend(Row("task", project, task=task) for task in tasks)
+            return result
         for section in doc.sections:
             section_tasks = [t for t in matching if t.section == section.line]
             if self.show_dates and self.date_sort:
@@ -213,7 +230,7 @@ class TodoApp(App[None]):
     def _help_lines(self) -> list[str]:
         if self.size.width < 42:
             common = ["j/k, ↑↓  Move", "Enter  Open / edit", "n  New task", "e  Edit task",
-                      "Space, 1–4  Status", "u  Toggle completed", "d  Toggle dates", "S  Sort by date", "w  Wrap text",
+                      "Space, 1–4  Status", "u  Toggle completed", "g  Group by status", "d  Toggle dates", "S  Sort by date", "w  Wrap text",
                       "s  New section", "x  Delete task (then y)", "Backspace  Remove section (then y)",
                       "/  Search", "o  Neovim", "y  Copy task", "Y  Sync TickTick", "r  Refresh", "Esc  Back · clear status", "q  Quit"]
             if not self.local:
@@ -222,6 +239,7 @@ class TodoApp(App[None]):
         common = ["j/k, ↑↓       Move", "Enter         Open project / edit task",
                   "n             New task (selected section)", "e             Edit task",
                   "Space, 1–4    Not started / in progress / in review / completed", "u             Show / hide completed",
+                  "g             Group by status / section",
                   "d             Show / hide dates", "S             Sort by date (dates on)", "w             Wrap / clip long rows", "s             Add ## section",
                   "x             Delete task (then y)", "Backspace     Remove empty section (then y)",
                   "o             Open task in Neovim", "/             Search; Esc clears",
@@ -265,6 +283,9 @@ class TodoApp(App[None]):
             label.append(" " * gap)
             label.append(summary, style="dim")
             return RowRender(label, "project-row")
+        if row.kind == "status":
+            assert row.status is not None
+            return RowRender(Text(STATUS[row.status].capitalize(), style="bold"), "section-row", Text(marker, style="bold" if selected else ""))
         if row.kind == "section":
             section = row.section
             assert section
@@ -312,6 +333,8 @@ class TodoApp(App[None]):
             return ("task", row.project.path if row.project else None, row.task.line, row.task.uid or row.task.text)
         if row.kind == "section":
             return ("section", row.project.path if row.project else None, row.section.line)
+        if row.kind == "status":
+            return ("status", row.status)
         if row.kind == "project":
             return ("project", row.project.path)
         if row.kind == "conflict":
@@ -410,7 +433,7 @@ class TodoApp(App[None]):
         elif self.page == "tasks":
             hint = "Enter open project   p projects   w wrap   ? keys"
         elif self.page == "detail":
-            hint = "n new   e edit   y copy   u completed   d dates   w wrap   ? keys" + ("   p projects" if not self.local else "")
+            hint = "n new   e edit   u completed   g group   d dates   ? keys" + ("   p projects" if not self.local else "")
         else:
             hint = "Esc close   q quit"
         if self.size.width < 43 and not self.message and not self.sync_running:
@@ -551,6 +574,13 @@ class TodoApp(App[None]):
             return
         self.show_completed = not self.show_completed
         self.message = "Showing completed" if self.show_completed else "Completed hidden"
+        self.run_worker(self.draw(preserve=True), exclusive=True)
+
+    def action_toggle_grouping(self) -> None:
+        if self.page != "detail" or self.prompt_kind:
+            return
+        self.group_by_status = not self.group_by_status
+        self.message = "Grouped by status" if self.group_by_status else "Grouped by section"
         self.run_worker(self.draw(preserve=True), exclusive=True)
 
     def action_toggle_dates(self) -> None:
