@@ -88,7 +88,7 @@ Completion adds a visible suffix, for example `- [x] Ship (completed: 2026-10-12
 
 The layout scrolls and reflows with the terminal size, using the full width of the window; long rows wrap and their continuation lines line up under the task text instead of snapping back to the left edge. `w` switches wrapping off so each row stays on one line and ends in `…`, and `TODOX_WRAP=0` starts that way. Narrow project rows put counts beneath the name; short screens hide secondary hints, not tasks. Task files retain their line endings and unrelated Markdown. Updates use a cooperative lock, a stale-file check, and atomic replacement.
 
-The interface draws with your terminal's own palette: the ANSI theme leaves the terminal background untouched, secondary text is dim, and the selected row is marked with `>` and bold rather than a filled bar. Set `TODOX_THEME` to any Textual theme name to override it.
+The default Quiet Ledger theme uses a charcoal background, ivory text, and an amber `>` cursor without a filled selection bar. Project counts align in columns, the header summarizes the current view, and add/edit/search prompts stay inline. Short terminals use denser rows. Set `TODOX_THEME=ansi-dark` for your terminal's own palette, or use any Textual theme name.
 
 ## TickTick sync (optional)
 

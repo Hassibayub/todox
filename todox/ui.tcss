@@ -1,4 +1,4 @@
-/* Terminal-native: no painted background, no filled selection bar. */
+/* Quiet Ledger: one surface, amber cursor, no filled selection bar. */
 Screen {
     background: $background;
     color: $text;
@@ -13,7 +13,8 @@ Screen {
 
 #title {
     height: 3;
-    padding: 1 1 0 1;
+    padding: 0 1;
+    border-bottom: solid $secondary;
     text-style: bold;
 }
 
@@ -69,7 +70,7 @@ ListItem.-highlight {
 
 ListItem.section-row {
     margin-top: 1;
-    text-style: bold;
+    text-style: none;
 }
 
 ListItem.project-row {
@@ -99,4 +100,45 @@ ListItem.conflict-row {
     padding: 0 1;
     text-style: dim;
     text-overflow: ellipsis;
+}
+
+#context {
+    height: auto;
+    padding: 0 1 1 1;
+}
+#prompt-label {
+    height: 2;
+    border-top: solid $secondary;
+    color: $text-muted;
+    padding: 0 1;
+}
+#prompt {
+    height: 1;
+    padding: 0 2;
+    margin-bottom: 1;
+}
+#prompt:focus {
+    border: none;
+    background: $background;
+}
+Screen.compact #title {
+    height: 2;
+}
+Screen.compact ListItem.section-row {
+    margin-top: 0;
+}
+Screen.compact ListItem.project-row {
+    margin-bottom: 0;
+}
+#items:focus {
+    background-tint: transparent;
+}
+ListItem.task-row {
+    margin-bottom: 1;
+}
+Screen.compact ListItem.task-row {
+    margin-bottom: 0;
+}
+#title {
+    text-style: none;
 }

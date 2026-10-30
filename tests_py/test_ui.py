@@ -425,3 +425,34 @@ async def test_arrows_move_exactly_one_row_even_without_list_focus(workspace):
         assert listing.index == 2
         await pilot.press("k")
         assert listing.index == 1
+
+
+@pytest.mark.asyncio
+async def test_ledger_header_and_inline_edit_preserve_task_until_save(workspace):
+    file, config = workspace
+    original = file.read_text()
+    app = TodoApp(local=file, registry=config)
+    async with app.run_test(size=(100, 30)) as pilot:
+        title = str(app.query_one('#title').render())
+        assert 'todox' in title and '2 open' in title and '1 completed' in title
+        await pilot.press('e')
+        assert app.query_one('#prompt-label').display
+        assert 'Enter save' in str(app.query_one('#footer').render())
+        await pilot.press('escape')
+        assert not app.query_one('#prompt-label').display
+        assert file.read_text() == original
+
+
+@pytest.mark.asyncio
+async def test_project_columns_and_compact_resize(workspace):
+    file, config = workspace
+    app = TodoApp(registry=config)
+    async with app.run_test(size=(100, 30)) as pilot:
+        assert app.query_one('#context').display
+        assert 'Review' in str(app.query_one('#context').render())
+        await pilot.resize_terminal(32, 7)
+        await pilot.pause()
+        assert app.screen.has_class('compact') and not app.query_one('#context').display
+        await pilot.press('enter', 'n')
+        assert app.query_one('#prompt').display
+        assert file.read_text().startswith('# TODO')

@@ -1,8 +1,7 @@
 """Responsive, keyboard-first Textual interface.
 
-The look is deliberately terminal-native: the ANSI theme leaves the terminal
-background and foreground untouched, secondary text is dim, and the selected
-row is marked with ``>`` instead of a filled bar.
+Quiet Ledger uses a charcoal surface, ivory text and an amber cursor.
+Theme overrides and all Markdown-backed workflows remain available.
 """
 from __future__ import annotations
 
@@ -19,6 +18,7 @@ from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
 from textual.events import Resize
+from textual.theme import Theme
 from textual.widgets import Input, ListItem, ListView, Static
 
 from .projects import Project, load_config, load_projects
@@ -101,8 +101,13 @@ class TodoApp(App[None]):
 
     def __init__(self, local: Path | None = None, registry: Path | None = None):
         super().__init__()
-        # Any Textual theme name works; the default keeps the terminal's own colors.
-        self.theme = os.environ.get("TODOX_THEME", "ansi-dark")
+        # Keep explicit theme overrides, including the original terminal palette.
+        self.register_theme(Theme(
+            name="quiet-ledger", primary="#f3bc63", accent="#f3bc63",
+            foreground="#f3efe3", background="#242424", surface="#242424",
+            panel="#242424", secondary="#a5a5a5", dark=True,
+        ))
+        self.theme = os.environ.get("TODOX_THEME", "quiet-ledger")
         self.local = local.resolve() if local else None
         self.registry = registry
         self.projects_data: list[Project] = []
@@ -130,19 +135,29 @@ class TodoApp(App[None]):
         self._background = BackgroundSync()
         self._quitting = False
         self.message = ""
+        self._last_resize = None
         self._return_page = self.page
         self._reload_data()
+
+    @property
+    def _viewport(self):
+        # Resize messages arrive before App updates its own size.
+        return self._last_resize or self.size
 
     def compose(self) -> ComposeResult:
         with Vertical(id="shell"):
             yield Static(id="title")
+            yield Static(id="context")
             yield TaskList(id="items")
             yield Static(id="empty")
+            yield Static(id="prompt-label")
             yield Input(id="prompt")
             yield Static(id="footer")
 
     async def on_mount(self) -> None:
+        self._last_resize = self.size
         self.query_one("#prompt", Input).display = False
+        self.query_one("#prompt-label", Static).display = False
         await self.draw()
         self.query_one("#items", ListView).focus()
         if self.auto_sync_enabled:
@@ -228,7 +243,21 @@ class TodoApp(App[None]):
         return [Row("help") for _ in self._help_lines()]
 
     def _help_lines(self) -> list[str]:
-        if self.size.width < 42:
+        if self._viewport.width >= 100:
+            left = ["Navigate", "j/k, arrows  Move", "Enter        Open / edit", "/            Search",
+                    "Esc          Back / clear", "q            Quit", "", "Tasks", "n            New task",
+                    "e            Edit task", "s            New section", "x            Delete, then y confirms",
+                    "Backspace    Remove empty section", "y            Copy", "o            Neovim"]
+            if not self.local:
+                left.insert(3, "p / t        Projects / open tasks")
+            right = ["Status", "Space  Cycle status", "1      [ ] Not started", "2      [/] In progress",
+                     "3      [?] In review", "4      [x] Completed", "", "View & sync", "u      Completed visibility",
+                     "g      Group status / section", "d      Completion dates", "S      Sort dates", "w      Wrap / clip",
+                     "Y      Sync TickTick", "r      Reload"]
+            column = (self._viewport.width - 8) // 2
+            return [(left[i] if i < len(left) else "").ljust(column) + (right[i] if i < len(right) else "")
+                    for i in range(max(len(left), len(right)))]
+        if self._viewport.width < 42:
             common = ["j/k, ↑↓  Move", "Enter  Open / edit", "n  New task", "e  Edit task",
                       "Space, 1–4  Status", "u  Toggle completed", "g  Group by status", "d  Toggle dates", "S  Sort by date", "w  Wrap text",
                       "s  New section", "x  Delete task (then y)", "Backspace  Remove section (then y)",
@@ -251,54 +280,59 @@ class TodoApp(App[None]):
 
     def _render_row(self, row: Row, width: int, index: int = 0, selected: bool = False) -> RowRender:
         marker = "> " if selected else "  "
+        accent = f"bold {self.current_theme.primary}"
         if row.kind == "help":
-            return RowRender(Text(marker + self._help_lines()[index], style="" if selected else "dim"), "help-row")
+            body = Text("  " + self._help_lines()[index])
+            body.highlight_regex(r"(?<!\S)(?:Space|Enter|Esc|Backspace|[1-4negusxyoYrdwqtpc/])(?=\s{2,})", accent)
+            return RowRender(body, "help-row")
         if row.kind == "conflict":
             change = row.change
             assert change
             label = change.name or (Path(change.project).parent.name if change.project else "TickTick")
             reason = review_reason(change)
             reason = reason[0].upper() + reason[1:]
-            body = Text.assemble((marker, "bold" if selected else ""), (label + " · ", "dim"),
+            body = Text.assemble((marker, accent if selected else ""), (label + " · ", "dim"),
                                  (change.text or "Task needs review", "bold"), (f"\n  {reason}", "dim"))
             if change.remote and change.remote.get("title") != change.text:
-                body.append(f"\n  TickTick: {change.remote.get('title', '')}", "dim")
+                body.append("\n\n  TODO.md\n", "dim")
+                body.append("  " + (change.text or "Task needs review"))
+                body.append("\n\n  TickTick\n", "dim")
+                body.append("  " + str(change.remote.get("title", "")))
             return RowRender(body, "conflict-row")
         if row.kind == "project":
             p = row.project
             assert p
             if p.error:
-                unavailable = Text.assemble((marker, "bold" if selected else ""), (p.name, "bold"), ("  unavailable", "red"))
+                unavailable = Text.assemble((marker, accent if selected else ""), (p.name, "bold"), ("  unavailable", "red"))
                 return RowRender(unavailable, "project-row")
             tally = counts(p.doc.tasks if p.doc else [])
-            summary = "  ·  ".join(f"{tally[status]} {label}" for status, label in STATUS.items())
-            if width < max(78, cell_len(p.name) + cell_len(summary) + 15):
+            name_width = self._project_name_width()
+            if width < name_width + 46:
                 compact = " · ".join(f"[{status}] {tally[status]}" for status in STATUS)
-                narrow = Text.assemble((marker, "bold" if selected else ""), (p.name + "\n", "bold"), ("  " + compact, "dim"))
-                return RowRender(narrow, "project-row narrow")
-            label = Text(marker, style="bold" if selected else "")
-            label.append(p.name, style="bold")
-            # Marker, shell padding and list padding all cost cells before the summary.
-            gap = max(2, width - cell_len(p.name) - cell_len(summary) - 5 - 10)
-            label.append(" " * gap)
-            label.append(summary, style="dim")
+                label = Text.assemble((marker + p.name, accent if selected else "bold"),
+                                      ("\n  " + compact, "dim"))
+                return RowRender(label, "project-row narrow")
+            label = Text(marker, style=accent if selected else "")
+            label.append(p.name + " " * max(1, name_width - cell_len(p.name)), style=accent if selected else "bold")
+            for status in STATUS:
+                label.append(f"{tally[status]:>10}", style=accent if selected else "dim")
             return RowRender(label, "project-row")
         if row.kind == "status":
             assert row.status is not None
-            return RowRender(Text(STATUS[row.status].capitalize(), style="bold"), "section-row", Text(marker, style="bold" if selected else ""))
+            return RowRender(Text(STATUS[row.status].capitalize(), style="bold"), "section-row", Text(marker, style=accent if selected else ""))
         if row.kind == "section":
             section = row.section
             assert section
-            return RowRender(Text(section.title, style="bold"), "section-row", Text(marker, style="bold" if selected else ""))
+            return RowRender(Text(section.title + ":", style=accent if selected else "dim"), "section-row", Text(marker, style=accent if selected else ""))
         assert row.task and row.project
         t = row.task
         box = f"[{t.status}]"
-        prefix = Text(marker, style="bold" if selected else "")
-        prefix.append(box + "  ", style="dim" if t.status == "x" else "bold")
+        prefix = Text(marker, style=accent if selected else "")
+        prefix.append(box + "  ", style=accent if selected else "dim" if t.status == "x" else "")
         body = Text()
         if self.page == "tasks":
             body.append(f"{row.project.name} / ", style="dim")
-        body.append(t.text, style="dim" if t.status == "x" else "")
+        body.append(t.text, style=accent if selected else "dim" if t.status == "x" else "")
         if self.show_dates and t.completed:
             body.append(f" · {t.completed}", style="dim")
         return RowRender(body, "task-row" + (" done" if t.status == "x" else ""), prefix)
@@ -309,7 +343,7 @@ class TodoApp(App[None]):
 
     def _paint_rows(self, indices) -> None:
         """Re-render only the given rows; a keypress must not repaint the whole list."""
-        width = self.size.width
+        width = self._viewport.width
         for index in indices:
             if not 0 <= index < len(self.rows) or index >= len(self._row_widgets):
                 continue
@@ -376,7 +410,7 @@ class TodoApp(App[None]):
         self.rows = rows
         self._row_widgets = []
         items: list[ListItem] = []
-        width = self.size.width
+        width = self._viewport.width
         for index, row in enumerate(self.rows):
             rendered = self._render_row(row, width, index)
             classes = self._row_classes(rendered)
@@ -400,10 +434,41 @@ class TodoApp(App[None]):
             self._paint_selection()
         self._update_chrome()
 
+    def _project_name_width(self) -> int:
+        return max(16, max((cell_len(p.name) for p in self.projects_data), default=0) + 2)
+
     def _update_chrome(self) -> None:
         project = self._project()
         title = {"projects": "Projects", "tasks": "Open tasks", "help": "Keys", "conflicts": "Tasks needing review"}.get(self.page, project.name if project else "Project")
-        self.query_one("#title", Static).update(Text(title, style="bold"))
+        if self.search_query:
+            summary = f"{sum(r.kind in {'task', 'project', 'conflict'} for r in self.rows)} matches"
+        elif self.page == "projects":
+            summary = f"{len(self.projects_data)} projects"
+        elif self.page == "tasks":
+            summary = f"{len(self.rows)} open"
+        elif self.page == "detail" and project and project.doc:
+            tally = counts(project.doc.tasks)
+            summary = f"{sum(v for k, v in tally.items() if k != 'x')} open · {tally['x']} completed"
+        elif self.page == "conflicts":
+            summary = f"{len(self.rows)} tasks"
+        else:
+            summary = ""
+        heading = Text.assemble(("todox", "bold"), (" / " + title, "dim"))
+        gap = self._viewport.width - 6 - heading.cell_len - cell_len(summary)
+        if gap >= 3:
+            heading.append(" " * gap + summary, "dim")
+        self.query_one("#title", Static).update(heading)
+        context = self.query_one("#context", Static)
+        if self.search_query:
+            context.update(Text("/ " + self.search_query + "   Esc clear", style="dim"))
+            context.display = self._viewport.height >= 10
+        elif self.page == "projects" and self._viewport.width >= self._project_name_width() + 46:
+            context.update(Text("  " + "Project".ljust(self._project_name_width()) +
+                                "".join(f"{name:>10}" for name in ("To do", "Doing", "Review", "Done")), style="dim"))
+            context.display = self._viewport.height >= 10
+        else:
+            context.display = False
+        self.screen.set_class(self._viewport.height < 26, "compact")
         empty = self.query_one("#empty", Static)
         if self.page == "projects":
             message = "No projects yet · run todo add-project /path" if not self.projects_data else "No matching projects"
@@ -417,6 +482,8 @@ class TodoApp(App[None]):
             message = ""
         empty.update(message)
         empty.display = not self.rows
+        empty.styles.height = "1fr"
+        self.query_one("#items", ListView).display = bool(self.rows)
         footer = self.query_one("#footer", Static)
         if self.message:
             hint = self.message
@@ -429,21 +496,24 @@ class TodoApp(App[None]):
             else:
                 hint = "Review this task in TickTick · Esc back"
         elif self.page == "projects":
-            hint = "c copy path   Enter open   p projects   t tasks   ? keys"
+            hint = "j/k move   Enter open   c copy path   t tasks   / search   ? keys"
         elif self.page == "tasks":
-            hint = "Enter open project   p projects   w wrap   ? keys"
+            hint = "j/k move   Enter open project   p projects   / search   ? keys"
         elif self.page == "detail":
-            hint = "n new   e edit   u completed   g group   d dates   ? keys" + ("   p projects" if not self.local else "")
+            hint = "n new   Enter edit   Space status   / search   d dates   ? keys" + ("   p projects" if not self.local else "")
         else:
             hint = "Esc close   q quit"
-        if self.size.width < 43 and not self.message and not self.sync_running:
+        if self._viewport.width < 43 and not self.message and not self.sync_running:
             hint = "? keys   q quit"
+        if self.prompt_kind and not self.message:
+            hint = "Enter save   Esc cancel" if self.prompt_kind != "search" else "Enter search   Esc cancel"
         footer.update(hint)
-        footer.display = self.size.height >= 5 and (not self.prompt_kind or bool(self.message))
-        self.query_one("#title", Static).display = self.size.height >= 3
+        footer.display = self._viewport.height >= 5
+        self.query_one("#title", Static).display = self._viewport.height >= 3
 
     async def on_resize(self, event: Resize) -> None:
-        if self.is_mounted:
+        if self.is_mounted and event.size != self._last_resize:
+            self._last_resize = event.size
             await self.draw(preserve=True)
 
     async def on_list_view_selected(self, event: ListView.Selected) -> None:
@@ -613,12 +683,19 @@ class TodoApp(App[None]):
                               "section": "New section · Enter saves", "search": "Search tasks"}[kind]
         prompt.value = value
         prompt.display = True
-        self.query_one("#footer", Static).display = False
+        label = self.query_one("#prompt-label", Static)
+        title = {"add": "New task", "edit": "Edit task", "section": "New section", "search": "Search"}[kind]
+        if kind == "add":
+            title += " · " + (row.section.title if row and row.section else "Main")
+        label.update(title)
+        label.display = self._viewport.height >= 10
+        self._update_chrome()
         prompt.focus()
 
     def _close_prompt(self) -> None:
         self.prompt_kind = None
         self.prompt_row = None
+        self.query_one("#prompt-label", Static).display = False
         self.query_one("#prompt", Input).display = False
         self.query_one("#items", ListView).focus()
         self._update_chrome()
