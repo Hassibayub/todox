@@ -89,6 +89,14 @@ async def test_local_cannot_navigate_global_and_adds_main_or_section(workspace):
         await pilot.press("n")
         await pilot.press(*"In work", "enter")
         assert "- [ ] In work\n" in file.read_text().split("## Work\n")[1]
+        # The newly created task is selected; adding again should stay in Work.
+        await pilot.press("n")
+        assert app.prompt_row.section.title == "Work"
+        await pilot.press(*"Another work task", "enter")
+        assert "- [ ] Another work task\n" in file.read_text().split("## Work\n")[1]
+        await pilot.press("g", "n")
+        await pilot.press(*"Grouped work task", "enter")
+        assert "- [ ] Grouped work task\n" in file.read_text().split("## Work\n")[1]
 
 
 @pytest.mark.asyncio

@@ -627,6 +627,10 @@ class TodoApp(App[None]):
         if self.page != "detail" or not self._project() or self.prompt_kind:
             return
         row = self._selected()
+        if row and row.task:
+            project = self._project()
+            section = next((s for s in project.doc.sections if s.line == row.task.section), None)
+            row = Row("section", project, section=section) if section else None
         self._open_prompt("add", row if row and row.kind == "section" else None)
 
     def action_edit_task(self) -> None:
