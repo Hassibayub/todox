@@ -11,3 +11,4 @@ dist/
 .DS_Store
 
 TODO.md
+/output/design/quiet-ledger
