@@ -479,3 +479,13 @@ async def test_arrows_move_exactly_one_row_even_without_list_focus(workspace):
         assert listing.index == 2
         await pilot.press("k")
         assert listing.index == 1
+
+
+@pytest.mark.asyncio
+async def test_plain_q_does_not_quit(workspace):
+    _, config = workspace
+    app = TodoApp(registry=config)
+    async with app.run_test() as pilot:
+        await pilot.press("q")
+        await pilot.pause()
+        assert app.is_running

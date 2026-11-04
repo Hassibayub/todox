@@ -96,7 +96,7 @@ class TodoApp(App[None]):
         Binding("r", "reload", "Reload", show=False),
         Binding("question_mark", "help", "Help", show=False),
         Binding("escape", "back", "Back", show=False),
-        Binding("q", "quit", "Quit", show=False),
+        Binding("ctrl+q", "quit", "Quit", show=False, priority=True),
     ]
 
     def __init__(self, local: Path | None = None, registry: Path | None = None):
@@ -236,7 +236,7 @@ class TodoApp(App[None]):
             common = ["j/k, ↑↓  Move", "Enter  Open / edit", "n  New task", "e  Edit task",
                       "Space, 1–4  Status", "u  Toggle completed", "g  Group by status", "d  Toggle dates", "S  Sort by date", "w  Wrap text",
                       "s  New section", "x  Delete task (then y)", "Backspace  Remove section (then y)",
-                      "/  Search", "o  Neovim", "y  Copy task", "Y  Sync TickTick", "r  Refresh", "Esc  Back · clear status", "q  Quit"]
+                      "/  Search", "o  Neovim", "y  Copy task", "Y  Sync TickTick", "r  Refresh", "Esc  Back · clear status", "Ctrl+Q  Quit"]
             if not self.local:
                 common[2:2] = ["p/t  Projects / tasks", "c  Copy path"]
             return common
@@ -248,7 +248,7 @@ class TodoApp(App[None]):
                   "x             Delete task (then y)", "Backspace     Remove empty section (then y)",
                   "o             Open task in Neovim", "/             Search; Esc clears",
                   "y             Copy selected task", "Y             Sync with TickTick",
-                  "r             Refresh TODO.md", "? / Esc       Close help · clear status", "q             Quit"]
+                  "r             Refresh TODO.md", "? / Esc       Close help · clear status", "Ctrl+Q        Quit"]
         if not self.local:
             common[2:2] = ["p / t         Projects / open tasks", "c             Copy project path"]
         return common
@@ -425,7 +425,7 @@ class TodoApp(App[None]):
         if self.message:
             hint = self.message
         elif self.sync_running:
-            hint = "Syncing… · q to quit"
+            hint = "Syncing… · Ctrl+Q to quit"
         elif self.page == "conflicts":
             selected = self._selected()
             if selected and selected.change and selected.change.uid and selected.change.remote:
@@ -439,9 +439,9 @@ class TodoApp(App[None]):
         elif self.page == "detail":
             hint = "n new   e edit   u completed   g group   d dates   ? keys" + ("   p projects" if not self.local else "")
         else:
-            hint = "Esc close   q quit"
+            hint = "Esc close   Ctrl+Q quit"
         if self.size.width < 43 and not self.message and not self.sync_running:
-            hint = "? keys   q quit"
+            hint = "? keys   ^Q quit"
         footer.update(hint)
         footer.display = self.size.height >= 5 and (not self.prompt_kind or bool(self.message))
         self.query_one("#title", Static).display = self.size.height >= 3

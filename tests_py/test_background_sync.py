@@ -44,7 +44,7 @@ async def test_cancellation_stops_and_reaps_slow_child(tmp_path):
     assert child.returncode is not None and worker.process is None
 
 
-def test_q_exits_whole_process_while_background_sync_is_slow(tmp_path):
+def test_ctrl_q_exits_whole_process_while_background_sync_is_slow(tmp_path):
     file = tmp_path / "TODO.md"
     file.write_text("# TODO\n- [ ] Local task\n")
     config = tmp_path / "projects.json"
@@ -69,7 +69,7 @@ async def check():
         await pilot.press('t')
         assert app.page=='tasks' and app.rows[0].task.text=='Local task'
         measure['q']=time.monotonic()
-        await pilot.press('q')
+        await pilot.press('ctrl+q')
     assert app._background.process is None and not app.sync_running
 asyncio.run(check())
 print(json.dumps({'exitSeconds':time.monotonic()-measure['q']}))

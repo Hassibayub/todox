@@ -82,7 +82,7 @@ A normal `todo` invocation opens the local file if one exists; from that screen 
 | `o` | Open selected task in Neovim |
 | `y` | Copy the selected task text (section name or project path on those rows) |
 | `Y` | Sync with TickTick |
-| `r`, `?`, `q` | Reload, help, quit |
+| `r`, `?`, `Ctrl+Q` | Reload, help, quit |
 
 Completion adds a visible suffix, for example `- [x] Ship (completed: 2026-10-12)`. Moving the task back to todo or in progress removes the suffix. `d` only changes whether the app displays that date; it never removes it from the file. Existing files without dates still work.
 
@@ -103,7 +103,7 @@ todo sync                  # apply
 todo ticktick status       # token and list state
 ```
 
-The token is stored in `~/.config/todox/ticktick.json` with owner-only permissions, or supplied via `TODOX_TICKTICK_TOKEN`. The app opens local tasks immediately and syncs in the background, showing a small status and refreshing tasks on completion. **`q` stops background sync and exits promptly**, even when TickTick is slow or offline; interrupted operations stay recorded for safe recovery. The first launch after upgrading **previews instead of writing** until the profile is migrated and active-only sync has been acknowledged. Review `todo sync --dry-run --json`, then run `todo sync` (or press `Y`) to enable subsequent launch syncs. Before that first write, a private snapshot of the registry, sync state, and affected local files is saved under the database directory's `backups/`. Set `TODOX_AUTO_SYNC=0` to disable launch sync. Custom registries do not auto-sync unless `TODOX_AUTO_SYNC=1` is explicitly set; demo scripts should also use isolated credentials and `TODOX_DB`.
+The token is stored in `~/.config/todox/ticktick.json` with owner-only permissions, or supplied via `TODOX_TICKTICK_TOKEN`. The app opens local tasks immediately and syncs in the background, showing a small status and refreshing tasks on completion. **`Ctrl+Q` stops background sync and exits promptly**, even when TickTick is slow or offline; interrupted operations stay recorded for safe recovery. The first launch after upgrading **previews instead of writing** until the profile is migrated and active-only sync has been acknowledged. Review `todo sync --dry-run --json`, then run `todo sync` (or press `Y`) to enable subsequent launch syncs. Before that first write, a private snapshot of the registry, sync state, and affected local files is saved under the database directory's `backups/`. Set `TODOX_AUTO_SYNC=0` to disable launch sync. Custom registries do not auto-sync unless `TODOX_AUTO_SYNC=1` is explicitly set; demo scripts should also use isolated credentials and `TODOX_DB`.
 
 **Simple output.** `todo sync` shows a short result, actual failures, and tasks needing review. Completed or unchanged tasks are not errors and no longer produce a long list of “paused” lines. Completed-copy cleanup is summarized once and remains optional. Use `todo sync --dry-run --verbose` for the full task-by-task report (including internal file paths), or `--json` for structured data.
 
