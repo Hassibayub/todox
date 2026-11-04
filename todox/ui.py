@@ -159,7 +159,11 @@ class TodoApp(App[None]):
             self.message = f"Cannot read projects: {exc}"
 
     def _project(self) -> Project | None:
-        return next((p for p in self.projects_data if p.path == self.selected_project), None)
+        return self._fresh(self.selected_project)
+
+    def _fresh(self, path: Path | None) -> Project | None:
+        """The current copy of a project; rows can outlive a save or a reload."""
+        return next((p for p in self.projects_data if p.path == path), None)
 
     def _selected(self) -> Row | None:
         index = self.query_one("#items", ListView).index
@@ -429,9 +433,9 @@ class TodoApp(App[None]):
             else:
                 hint = "Review this task in TickTick · Esc back"
         elif self.page == "projects":
-            hint = "c copy path   Enter open   p projects   t tasks   ? keys"
+            hint = "n new task   c copy path   Enter open   t tasks   ? keys"
         elif self.page == "tasks":
-            hint = "Enter open project   p projects   w wrap   ? keys"
+            hint = "n new   e edit   Space status   Enter open project   p projects   ? keys"
         elif self.page == "detail":
             hint = "n new   e edit   u completed   g group   d dates   ? keys" + ("   p projects" if not self.local else "")
         else:
@@ -609,8 +613,12 @@ class TodoApp(App[None]):
         self.prompt_kind = kind
         self.prompt_row = row
         prompt = self.query_one("#prompt", Input)
-        prompt.placeholder = {"add": "New task · Enter saves", "edit": "Edit task · Enter saves",
-                              "section": "New section · Enter saves", "search": "Search tasks"}[kind]
+        placeholder = {"add": "New task · Enter saves", "edit": "Edit task · Enter saves",
+                       "section": "New section · Enter saves", "search": "Search tasks"}[kind]
+        # Outside a project, name the file the task lands in.
+        if kind in {"add", "edit"} and self.page != "detail" and row and row.project:
+            placeholder = placeholder.replace(" ·", f" in {row.project.name} ·", 1)
+        prompt.placeholder = placeholder
         prompt.value = value
         prompt.display = True
         self.query_one("#footer", Static).display = False
@@ -624,18 +632,32 @@ class TodoApp(App[None]):
         self._update_chrome()
 
     def action_new_task(self) -> None:
-        if self.page != "detail" or not self._project() or self.prompt_kind:
+        """Add to the selected section, the selected task's section, or Main.
+
+        On Projects and the global task list the task goes to the selected
+        row's project, so tasks can be added without opening the project.
+        """
+        if self.page not in {"detail", "tasks", "projects"} or self.prompt_kind:
             return
         row = self._selected()
+        project = self._project() if self.page == "detail" else self._fresh(row.project.path) if row and row.project else None
+        if not project or not project.doc:
+            if self.page != "detail":
+                self.message = project.error if project and project.error else "Select a project to add a task"
+                self._update_chrome()
+            return
+        target = Row("project", project)
         if row and row.task:
-            project = self._project()
             section = next((s for s in project.doc.sections if s.line == row.task.section), None)
-            row = Row("section", project, section=section) if section else None
-        self._open_prompt("add", row if row and row.kind == "section" else None)
+            if section:
+                target = Row("section", project, section=section)
+        elif row and row.kind == "section":
+            target = row
+        self._open_prompt("add", target)
 
     def action_edit_task(self) -> None:
         row = self._selected()
-        if self.page == "detail" and row and row.task and not self.prompt_kind:
+        if self.page in {"detail", "tasks"} and row and row.task and not self.prompt_kind:
             self._open_prompt("edit", row, row.task.text)
 
     def action_new_section(self) -> None:
@@ -729,7 +751,7 @@ class TodoApp(App[None]):
             self._close_prompt()
             await self.draw()
             return
-        project = self._project()
+        project = self._fresh(row.project.path) if row and row.project else self._project()
         if not kind or not project or not project.doc:
             self._close_prompt()
             return
@@ -742,7 +764,10 @@ class TodoApp(App[None]):
                 section = row.section.line if row and row.section else main_section(project.doc).line
                 updated = save(project.doc, "add", section=section, value=value)
             elif kind == "edit":
-                updated = save(project.doc, "edit", line=row.task.line, value=value)
+                task = self._locate(project.doc, row.task)
+                if task is None:
+                    raise ValueError("Task changed · refresh before editing")
+                updated = save(project.doc, "edit", line=task.line, value=value)
             else:
                 updated = save(project.doc, "add-section", value=value)
         except (OSError, ValueError) as exc:
@@ -754,17 +779,18 @@ class TodoApp(App[None]):
         self._close_prompt()
         await self.draw(preserve=True)
         if kind == "add":
-            self._select_task(value, section)
+            self._select_task(value, section, project.path)
         elif kind == "section":
             self._select_section(value)
 
     def _replace_doc(self, path: Path, doc: Document) -> None:
         self.projects_data = [Project(p.name, p.path, doc, None) if p.path == path else p for p in self.projects_data]
 
-    def _select_task(self, text: str, section: int) -> None:
+    def _select_task(self, text: str, section: int, path: Path) -> None:
         for i in range(len(self.rows) - 1, -1, -1):
             row = self.rows[i]
-            if row.task and row.task.text == text and row.task.section == section:
+            if (row.task and row.project and row.project.path == path
+                    and row.task.text == text and row.task.section == section):
                 self.query_one("#items", ListView).index = i
                 break
 
@@ -775,7 +801,7 @@ class TodoApp(App[None]):
 
     async def _set_status(self, status: str | None = None) -> None:
         row = self._selected()
-        if self.page != "detail" or not row or not row.task or not row.project or not row.project.doc or self.prompt_kind:
+        if self.page not in {"detail", "tasks"} or not row or not row.task or not row.project or not row.project.doc or self.prompt_kind:
             return
         task = row.task
         target = status or STATUS_CYCLE[(STATUS_CYCLE.index(task.status) + 1) % len(STATUS_CYCLE)]
@@ -786,7 +812,8 @@ class TodoApp(App[None]):
             self._update_chrome()
             return
         self._replace_doc(row.project.path, updated)
-        self.message = STATUS[target].capitalize()
+        # The global list hides completed tasks, so say which one just left it.
+        self.message = STATUS[target].capitalize() + (f" · {task.text}" if self.page == "tasks" else "")
         await self.draw(preserve=True)
 
     def action_sync(self) -> None:

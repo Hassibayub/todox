@@ -62,7 +62,7 @@ A normal `todo` invocation opens the local file if one exists; from that screen 
 
 ## Screens and keys
 
-**Projects** shows each project's not-started, in-progress, in-review, and completed counts. `Enter` opens it; `c` copies its directory path; `t` opens the global list of unfinished tasks. `p` returns to Projects from a globally opened project or the task list.
+**Projects** shows each project's not-started, in-progress, in-review, and completed counts. `Enter` opens it; `c` copies its directory path; `t` opens the global list of unfinished tasks; `n` on a project adds a task to its Main section. On the task list, `e` edits the selected task, `Space`/`1–4` set its status (completed tasks leave the list), and `n` adds a task to the selected task's project and section, so you can work across projects without opening each one. `p` returns to Projects from a globally opened project or the task list.
 
 **Project tasks** show tasks before the first `##` heading without a visible Main heading. An older `## General` or `## Main` as the first section is also hidden. Each other `##` heading groups its tasks. `n` on a section adds there; `n` elsewhere adds to Main. Press `g` to switch between section and status grouping; this does not change the file.
 

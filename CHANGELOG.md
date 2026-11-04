@@ -6,6 +6,8 @@ The distribution is named `todox-tui` (the PyPI name `todox` belongs to an unrel
 
 ## Unreleased
 
+- Add and update tasks from global mode: on the Open tasks list, `n` adds to the selected task's project and section, `e` edits, and `Space`/`1–4` change status; on Projects, `n` adds to the selected project's Main section. The prompt names the project the task is saved to.
+
 - Up/Down arrows now move the selection through the same code path as `j`/`k`, so they keep working when the list itself is not focused; they no longer fall back to being a no-op while `j`/`k` work. Arrows in the search/add/edit prompt still move the text cursor.
 
 - Keep the cursor responsive on large files: moving the selection repaints only the row losing the `>` marker and the row gaining it instead of every row, and refreshing, toggling dates or changing a status reuses the existing rows instead of rebuilding the whole list. A refresh or terminal resize no longer blocks the event loop for seconds.

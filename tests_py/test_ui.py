@@ -54,6 +54,52 @@ async def test_global_opens_projects_and_navigates(workspace):
 
 
 @pytest.mark.asyncio
+async def test_global_task_list_adds_edits_and_updates_status(tmp_path: Path):
+    files = {}
+    for name, body in (("first", "- [ ] One\n"), ("second", "- [ ] Two\n## Later\n- [/] Three\n")):
+        folder = tmp_path / name
+        folder.mkdir()
+        files[name] = folder / "TODO.md"
+        files[name].write_text(body)
+    config = tmp_path / "projects.json"
+    config.write_text(json.dumps({"version": 1, "projects": [
+        {"name": name, "path": str(file)} for name, file in files.items()]}))
+    app = TodoApp(registry=config)
+    async with app.run_test(size=(90, 18)) as pilot:
+        await pilot.press("t")
+        assert [r.task.text for r in app.rows] == ["One", "Two", "Three"]
+        # Edit in place, in the task's own file.
+        await pilot.press("down", "e")
+        assert app.prompt_kind == "edit"
+        assert "second" in app.query_one("#prompt").placeholder
+        await pilot.press("end", *" again", "enter")
+        assert files["second"].read_text() == "- [ ] Two again\n## Later\n- [/] Three\n"
+        assert app.page == "tasks"
+        # Adding on a task lands in that task's project and section, and selects it.
+        await pilot.press("down", "n")
+        assert app.prompt_row.section.title == "Later"
+        await pilot.press(*"Four", "enter")
+        assert files["second"].read_text().endswith("- [/] Three\n- [ ] Four\n")
+        assert app.rows[app.query_one("#items").index].task.text == "Four"
+        assert files["first"].read_text() == "- [ ] One\n"
+        # Status keys work; completed tasks leave the open list.
+        await pilot.press("2")
+        assert "- [/] Four" in files["second"].read_text()
+        await pilot.press("4")
+        assert "- [x] Four (completed:" in files["second"].read_text()
+        assert "Four" not in [r.task.text for r in app.rows]
+        assert app.message == "Completed · Four"
+        # From Projects, n adds to the selected project's Main section.
+        await pilot.press("p")
+        app.query_one("#items").index = 0
+        await pilot.press("n")
+        assert "first" in app.query_one("#prompt").placeholder
+        await pilot.press(*"Zero", "enter")
+        assert files["first"].read_text() == "- [ ] One\n- [ ] Zero\n"
+        assert app.page == "projects"
+
+
+@pytest.mark.asyncio
 async def test_global_project_selection_survives_return(tmp_path: Path):
     projects = []
     for name in ("first", "second"):
