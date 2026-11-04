@@ -6,6 +6,12 @@ The distribution is named `todox-tui` (the PyPI name `todox` belongs to an unrel
 
 ## Unreleased
 
+- Redesigned the interface around the terminal's own colors and any screen size. Projects show one line each with todo / doing / review / done columns, and a progress meter on wide terminals. Open tasks are grouped under a heading per project with each task's section on the right. Status marks are colored (yellow in progress, cyan in review, green done) using only named ANSI colors, so the terminal theme decides how they look.
+- New and edited tasks are typed in place, in the row where they will be saved, with line-editing keys; the footer names the destination file.
+- The header shows a breadcrumb, view state (`done hidden`, `dates`, `/search`) and sync status. Footer hints drop lowest priority first and keep `? keys`; messages sit beside the hints and clear on the next key.
+- Layout tiers from under 40 to 150+ columns: tiny panes clip rows and count what is below; terminals 150+ columns wide show a projects pane beside the task list (`Tab` switches). The keys screen splits into four groups and fades keys that do not apply.
+- Fix: resizing the terminal now lays out at the new size instead of the previous one.
+
 - Add and update tasks from global mode: on the Open tasks list, `n` adds to the selected task's project and section, `e` edits, and `Space`/`1–4` change status; on Projects, `n` adds to the selected project's Main section. The prompt names the project the task is saved to.
 
 - Up/Down arrows now move the selection through the same code path as `j`/`k`, so they keep working when the list itself is not focused; they no longer fall back to being a no-op while `j`/`k` work. Arrows in the search/add/edit prompt still move the text cursor.

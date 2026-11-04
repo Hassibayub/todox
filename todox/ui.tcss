@@ -1,4 +1,5 @@
-/* Terminal-native: no painted background, no filled selection bar. */
+/* Terminal-native: no painted background, no filled selection bar, only the
+   terminal's own ANSI colors. Text colors live in ui.py as named ANSI styles. */
 Screen {
     background: $background;
     color: $text;
@@ -11,10 +12,43 @@ Screen {
     padding: 0 1;
 }
 
+/* Short terminals get a one-line header; tall ones a blank row above and below. */
 #title {
+    height: 1;
+    padding: 0 1;
+}
+
+#shell.-tall #title {
     height: 3;
     padding: 1 1 0 1;
-    text-style: bold;
+}
+
+#body {
+    height: 1fr;
+}
+
+#main {
+    width: 1fr;
+    height: 100%;
+}
+
+/* Projects pane, shown beside the list on wide terminals. */
+#side {
+    display: none;
+    width: 40;
+    height: 100%;
+    background: $background;
+    border: none;
+    border-right: solid ansi_bright_black;
+    scrollbar-size: 1 1;
+    scrollbar-color: $text;
+    scrollbar-background: $background;
+}
+
+#columns {
+    display: none;
+    height: 1;
+    padding: 0 1;
 }
 
 #items {
@@ -57,7 +91,8 @@ Horizontal.row-line > .row-body {
 }
 
 /* w: unwrapped rows stay on one line and end in an ellipsis. */
-ListItem.unwrap Horizontal.row-line > .row-body {
+ListItem.unwrap Horizontal.row-line > .row-body,
+ListItem.unwrap > Static {
     text-wrap: nowrap;
     text-overflow: ellipsis;
 }
@@ -67,16 +102,22 @@ ListItem.-highlight {
     text-style: bold;
 }
 
+ListItem.help-row.-highlight {
+    text-style: none;
+}
+
+/* Section, status and project headings get a blank row above, except at the top. */
 ListItem.section-row {
     margin-top: 1;
-    text-style: bold;
 }
 
-ListItem.project-row {
-    margin-bottom: 1;
+ListItem.section-row:first-child {
+    margin-top: 0;
 }
 
-ListItem.conflict-row {
+ListItem.project-row.narrow,
+ListItem.conflict-row,
+ListItem.side-all {
     margin-bottom: 1;
 }
 
@@ -87,16 +128,20 @@ ListItem.conflict-row {
 }
 
 #prompt {
-    height: 3;
+    height: 1;
     border: none;
     background: $background;
     padding: 0 2;
 }
 
 #footer {
-    height: 2;
+    height: 1;
     width: 100%;
     padding: 0 1;
-    text-style: dim;
     text-overflow: ellipsis;
+}
+
+#shell.-tall #footer {
+    height: 2;
+    padding: 1 1 0 1;
 }

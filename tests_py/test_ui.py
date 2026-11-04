@@ -46,7 +46,8 @@ async def test_global_opens_projects_and_navigates(workspace):
         assert app.rows[0].project.name == "sample"
         await pilot.press("t")
         assert app.page == "tasks"
-        assert [r.task.text for r in app.rows] == ["Main task", "Active"]
+        assert [r.kind for r in app.rows] == ["group", "task", "task"]
+        assert [r.task.text for r in app.rows if r.task] == ["Main task", "Active"]
         await pilot.press("p", "enter")
         assert app.page == "detail"
         await pilot.press("p")
@@ -67,17 +68,24 @@ async def test_global_task_list_adds_edits_and_updates_status(tmp_path: Path):
     app = TodoApp(registry=config)
     async with app.run_test(size=(90, 18)) as pilot:
         await pilot.press("t")
-        assert [r.task.text for r in app.rows] == ["One", "Two", "Three"]
-        # Edit in place, in the task's own file.
-        await pilot.press("down", "e")
+        # Tasks sit under one heading per project instead of repeating its name.
+        assert [(r.kind, r.task.text if r.task else r.project.name) for r in app.rows] == [
+            ("group", "first"), ("task", "One"), ("group", "second"), ("task", "Two"), ("task", "Three")]
+        # Edit in place: the row itself becomes the editor, starting at the end of the text.
+        app.query_one("#items").index = 3
+        await pilot.pause()
+        await pilot.press("e")
         assert app.prompt_kind == "edit"
-        assert "second" in app.query_one("#prompt").placeholder
-        await pilot.press("end", *" again", "enter")
+        assert "editing in second" in str(app.query_one("#footer").render())
+        await pilot.press(*" again", "enter")
         assert files["second"].read_text() == "- [ ] Two again\n## Later\n- [/] Three\n"
         assert app.page == "tasks"
-        # Adding on a task lands in that task's project and section, and selects it.
+        # Adding on a task lands in that task's project and section, typed in place, and selects it.
         await pilot.press("down", "n")
         assert app.prompt_row.section.title == "Later"
+        draft = next(i for i, r in enumerate(app.rows) if r.kind == "draft")
+        assert app.rows[draft - 1].task.text == "Three" and app.query_one("#items").index == draft
+        assert "adding to second › Later" in str(app.query_one("#footer").render())
         await pilot.press(*"Four", "enter")
         assert files["second"].read_text().endswith("- [/] Three\n- [ ] Four\n")
         assert app.rows[app.query_one("#items").index].task.text == "Four"
@@ -87,16 +95,20 @@ async def test_global_task_list_adds_edits_and_updates_status(tmp_path: Path):
         assert "- [/] Four" in files["second"].read_text()
         await pilot.press("4")
         assert "- [x] Four (completed:" in files["second"].read_text()
-        assert "Four" not in [r.task.text for r in app.rows]
+        assert "Four" not in [r.task.text for r in app.rows if r.task]
         assert app.message == "Completed · Four"
         # From Projects, n adds to the selected project's Main section.
         await pilot.press("p")
         app.query_one("#items").index = 0
         await pilot.press("n")
-        assert "first" in app.query_one("#prompt").placeholder
+        assert [r.kind for r in app.rows[:2]] == ["project", "draft"]
+        assert "adding to first" in str(app.query_one("#footer").render())
         await pilot.press(*"Zero", "enter")
         assert files["first"].read_text() == "- [ ] One\n- [ ] Zero\n"
-        assert app.page == "projects"
+        assert app.page == "projects" and app.rows[app.query_one("#items").index].project.name == "first"
+        # Esc abandons a draft without touching the file.
+        await pilot.press("n", *"Never", "escape")
+        assert app.draft is None and "Never" not in files["first"].read_text()
 
 
 @pytest.mark.asyncio
@@ -332,7 +344,7 @@ async def test_escape_dismisses_the_status_line_and_restores_hints(workspace):
         assert app.message == "Dates visible" and "Dates visible" in str(app.query_one("#footer").render())
         await pilot.press("escape")
         assert app.page == "detail" and app.message == ""
-        assert "d dates" in str(app.query_one("#footer").render())
+        assert "e edit" in str(app.query_one("#footer").render())
         # A later action still reports, and Esc clears it again.
         await pilot.press("u")
         assert app.message == "Completed hidden"
@@ -489,3 +501,131 @@ async def test_plain_q_does_not_quit(workspace):
         await pilot.press("q")
         await pilot.pause()
         assert app.is_running
+
+
+@pytest.fixture
+def portfolio(tmp_path: Path):
+    """Two projects with every status, for layout and split-view tests."""
+    entries = []
+    for name, body in (("web-app", "## Frontend\n- [ ] Login\n- [/] Layout\n- [x] Shortcuts (completed: 2026-10-30)\n"),
+                       ("api-service", "- [ ] Rotate keys\n## Backend\n- [?] Database\n")):
+        folder = tmp_path / name
+        folder.mkdir()
+        (folder / "TODO.md").write_text(body)
+        entries.append({"name": name, "path": str(folder / "TODO.md")})
+    config = tmp_path / "projects.json"
+    config.write_text(json.dumps({"version": 1, "projects": entries}))
+    return config
+
+
+def _screen(app) -> str:
+    return "\n".join(strip.text for strip in app.screen._compositor.render_strips())
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("width, expected", [
+    (34, "1/3"),                 # tiny: done / total
+    (56, "[ ] 1 · [/] 1"),       # narrow: counts under the name
+    (80, "todo  doing  review"),  # one line per project, with column labels
+    (120, "33%"),                # wide enough for the progress meter
+])
+async def test_project_rows_adapt_to_the_terminal_width(portfolio, width, expected):
+    app = TodoApp(registry=portfolio)
+    async with app.run_test(size=(width, 20)) as pilot:
+        await pilot.pause(0.1)
+        assert expected in _screen(app)
+        two_line = "narrow" in app._row_widgets[0].item.classes
+        assert two_line == (width == 56)
+
+
+@pytest.mark.asyncio
+async def test_split_view_on_wide_terminals(portfolio):
+    app = TodoApp(registry=portfolio)
+    async with app.run_test(size=(160, 24)) as pilot:
+        await pilot.pause(0.1)
+        side = app.query_one("#side")
+        # Projects become a pane beside the selected project's tasks.
+        assert side.display and app.side_focus and app.page == "detail"
+        assert app._project().name == "web-app"
+        await pilot.press("j")
+        assert app._project().name == "api-service" and [r.task.text for r in app.rows if r.task] == ["Rotate keys", "Database"]
+        # Task keys wait while the pane holds the keyboard; tab hands it to the list.
+        await pilot.press("space")
+        assert "- [ ] Rotate keys" in (Path(app._project().path)).read_text()
+        await pilot.press("tab", "space")
+        assert not app.side_focus and "- [/] Rotate keys" in Path(app._project().path).read_text()
+        # n from the pane adds to that project's Main, typed in place.
+        await pilot.press("escape")
+        assert app.side_focus
+        await pilot.press("n", *"Pane task", "enter")
+        assert "- [ ] Pane task\n## Backend" in Path(app._project().path).read_text()
+        # "All open tasks" heads the pane.
+        await pilot.press("t")
+        assert app.page == "tasks" and app.side_index == 0 and not app.side_focus
+        # Narrowing the terminal folds the pane back into separate screens.
+        await pilot.press("escape")
+        await pilot.resize_terminal(90, 24)
+        await pilot.pause(0.1)
+        assert not side.display and app.page == "projects" and not app.side_focus
+
+
+@pytest.mark.asyncio
+async def test_styles_are_named_ansi_colors_only(portfolio):
+    """The terminal's theme must decide every color: no hex, 256-color or truecolor."""
+    allowed = {"", "bold", "dim", "reverse", "red", "green", "yellow", "cyan", "bold yellow", "bold cyan"}
+    app = TodoApp(registry=portfolio)
+    async with app.run_test(size=(160, 24)) as pilot:
+        await pilot.pause(0.1)
+        assert app.current_theme.ansi and app.native_ansi_color
+        texts = [app._header(156), app._footer(156)]
+        for page in ("tasks", "detail"):
+            await pilot.press("t" if page == "tasks" else "p")
+            await pilot.pause(0.05)
+            width = app._content_width()
+            for index, row in enumerate(app.rows):
+                rendered = app._render_row(row, width, index, index == app.selected_index)
+                texts += [rendered.body] + ([rendered.marker] if rendered.marker else [])
+            texts += [app._render_side_row(row, True) for row in app.side_rows]
+        styles = {str(span.style) for text in texts for span in text.spans} | {str(text.style) for text in texts}
+        assert styles <= allowed, styles - allowed
+
+
+@pytest.mark.asyncio
+async def test_footer_keeps_help_and_shows_messages_beside_hints(portfolio):
+    app = TodoApp(registry=portfolio)
+    async with app.run_test(size=(44, 20)) as pilot:
+        await pilot.press("enter")
+        footer = lambda: str(app.query_one("#footer").render())
+        assert footer().rstrip().endswith("? keys") and "n new" in footer()
+        await pilot.press("d")
+        assert "Dates visible" in footer() and "? keys" in footer()
+        # A message lasts until the next key.
+        await pilot.press("j")
+        assert app.message == "" and "Dates visible" not in footer()
+        # The header shows view state that would otherwise be invisible.
+        await pilot.press("u")
+        assert "done hidden · dates" in str(app.query_one("#title").render())
+
+
+@pytest.mark.asyncio
+async def test_drafts_support_line_editing_keys(portfolio):
+    app = TodoApp(registry=portfolio)
+    async with app.run_test(size=(80, 20)) as pilot:
+        await pilot.press("enter", "n", *"Shpi", "backspace", "backspace", *"ip", "home", "delete", *"S", "end", *" it")
+        assert app.draft.text == "Ship it"
+        await pilot.press("ctrl+w")
+        assert app.draft.text == "Ship "
+        await pilot.press("ctrl+u", *"Ship it", "enter")
+        assert "- [ ] Ship it\n" in Path(app._project().path).read_text()
+        assert app.message == "Saved to web-app/TODO.md"
+
+
+@pytest.mark.asyncio
+async def test_tiny_panes_clip_rows_and_count_what_is_below(long_task):
+    file, config, text = long_task
+    app = TodoApp(local=file, registry=config)
+    async with app.run_test(size=(34, 5)) as pilot:
+        await pilot.pause(0.2)
+        assert not app.query_one("#title").display
+        _, body = _row_parts(app)
+        assert body.size.height == 1 and body.render_line(0).text.endswith("…")

@@ -67,7 +67,7 @@ async def check():
         await asyncio.wait_for(started(),3)
         assert app.sync_running
         await pilot.press('t')
-        assert app.page=='tasks' and app.rows[0].task.text=='Local task'
+        assert app.page=='tasks' and app.rows[1].task.text=='Local task'
         measure['q']=time.monotonic()
         await pilot.press('ctrl+q')
     assert app._background.process is None and not app.sync_running
@@ -253,4 +253,4 @@ worker.main()
         assert app.message == "Sync finished · 1 sent"
         assert not app.sync_running and app._background.process is None
         assert "todox:id=" in file.read_text()
-        assert app.rows[0].task.uid
+        assert app.rows[1].task.uid

@@ -62,13 +62,16 @@ A normal `todo` invocation opens the local file if one exists; from that screen 
 
 ## Screens and keys
 
-**Projects** shows each project's not-started, in-progress, in-review, and completed counts. `Enter` opens it; `c` copies its directory path; `t` opens the global list of unfinished tasks; `n` on a project adds a task to its Main section. On the task list, `e` edits the selected task, `Space`/`1–4` set its status (completed tasks leave the list), and `n` adds a task to the selected task's project and section, so you can work across projects without opening each one. `p` returns to Projects from a globally opened project or the task list.
+**Projects** lists one project per line with its todo / doing / review / done counts; wide terminals add a progress meter. `Enter` opens it; `c` copies its directory path; `t` opens **Open tasks**; `n` on a project adds a task to its Main section. Open tasks groups unfinished tasks under one heading per project, with each task's section on the right. There, `e` edits the selected task, `Space`/`1–4` set its status (completed tasks leave the list), and `n` adds a task to the selected task's project and section, so you can work across projects without opening each one. `p` returns to Projects from a globally opened project or the task list.
+
+New and edited tasks are typed in their own row, where they will be saved; the footer names the file (`adding to api-service › Backend`). `Enter` saves, `Esc` cancels, and the usual line-editing keys work (`←`/`→`, `Home`/`End`, `Ctrl+A`/`Ctrl+E`, `Ctrl+U`, `Ctrl+K`, `Ctrl+W`, paste).
 
 **Project tasks** show tasks before the first `##` heading without a visible Main heading. An older `## General` or `## Main` as the first section is also hidden. Each other `##` heading groups its tasks. `n` on a section adds there; `n` elsewhere adds to Main. Press `g` to switch between section and status grouping; this does not change the file.
 
 | Key | Action |
 |---|---|
 | `j/k`, arrows | Move through a scrolling list |
+| `Tab` | Switch between the projects pane and the task list (150+ columns) |
 | `Enter` | Open project, or edit task; on a section, add there |
 | `n`, `e` | Add or edit task |
 | `Space`, `1/2/3/4` | Cycle or set not started / in progress / in review / completed |
@@ -86,9 +89,21 @@ A normal `todo` invocation opens the local file if one exists; from that screen 
 
 Completion adds a visible suffix, for example `- [x] Ship (completed: 2026-10-12)`. Moving the task back to todo or in progress removes the suffix. `d` only changes whether the app displays that date; it never removes it from the file. Existing files without dates still work.
 
-The layout scrolls and reflows with the terminal size, using the full width of the window; long rows wrap and their continuation lines line up under the task text instead of snapping back to the left edge. `w` switches wrapping off so each row stays on one line and ends in `…`, and `TODOX_WRAP=0` starts that way. Narrow project rows put counts beneath the name; short screens hide secondary hints, not tasks. Task files retain their line endings and unrelated Markdown. Updates use a cooperative lock, a stale-file check, and atomic replacement.
+The header shows where you are (`Projects › web-app`), view state that would otherwise be invisible (`done hidden · dates`, an active `/search`) and sync status (`● synced 2m ago`). The footer lists key hints in priority order; a status message appears beside them, not instead of them, and clears on the next key.
 
-The interface draws with your terminal's own palette: the ANSI theme leaves the terminal background untouched, secondary text is dim, and the selected row is marked with `>` and bold rather than a filled bar. Set `TODOX_THEME` to any Textual theme name to override it.
+The layout adapts to any terminal size. Tasks never disappear; the header, footer and extras shrink first:
+
+| Width | Layout |
+|---|---|
+| under 40 | Rows clip with `…`; projects show done/total; the footer counts rows below (`9 more ↓`) |
+| 40–69 | Project counts sit under the name; Open tasks drops section labels |
+| 70–109 | One line per project with count columns; section labels on Open tasks |
+| 110–149 | Adds a progress meter to each project |
+| 150 and up | Projects pane beside the task list (global only); `Tab` switches panes |
+
+Below 8 rows the header hides and the footer shows only when it has something to say; from 16 rows both get a blank row of breathing room. The selected row stays in view after a resize. Long rows wrap with their continuation lines under the task text; `w` clips them to one line ending in `…`, and `TODOX_WRAP=0` starts that way. Task files retain their line endings and unrelated Markdown. Updates use a cooperative lock, a stale-file check, and atomic replacement.
+
+Every color comes from your terminal's theme. The default ANSI theme paints no background, and the interface uses only the named ANSI colors plus bold, dim and reverse: yellow for `[/]`, cyan for `[?]`, green for `[x]` and the sync dot, red for missing files and delete prompts. Selection is `>` and bold, not a filled bar. With `NO_COLOR`, the `[ ] [/] [?] [x]` marks still tell states apart. Set `TODOX_THEME` to any Textual theme name to override it.
 
 ## TickTick sync (optional)
 
